@@ -24,7 +24,7 @@ def generate_prompt(repo_ref: str, mode: str, registry_url: str | None = None) -
     resolved_registry_url = resolve_registry_url(registry_url)
     with resolve_repository(repo_ref) as repo:
         registry = load_registry(resolved_registry_url)
-        prompt_data = analyze_repository(repo, registry, resolved_registry_url)
+        prompt_data = analyze_repository(repo, registry, resolved_registry_url, mode)
         return render_prompt(prompt_data, mode)
 
 
@@ -32,6 +32,7 @@ def analyze_repository(
     repo: RepositoryContext,
     registry: dict[str, Any],
     registry_url: str,
+    mode: str,
 ) -> PromptData:
     (
         readme_path,
@@ -72,8 +73,8 @@ def analyze_repository(
         prompt_data.protected_paths.extend(
             extract_protected_paths(codeowners_text, format_source_path(repo, codeowners_path))
         )
-    prompt_data.rules = dedupe_facts(prompt_data.rules, limit=8)
-    prompt_data.commands = dedupe_facts(prompt_data.commands, limit=10)
+    prompt_data.rules = rank_rules(prompt_data.rules, mode)
+    prompt_data.commands = rank_commands(prompt_data.commands, mode)
     prompt_data.protected_paths = dedupe_facts(prompt_data.protected_paths, limit=12)
 
     registry_entry = registry.get(repo.full_name) if repo.full_name else None
@@ -141,7 +142,7 @@ def render_prompt(prompt_data: PromptData, mode: str) -> str:
     else:
         lines.append("- No reliable README summary was extracted.")
     lines.append("")
-    lines.append("## Contribution Rules")
+    lines.append(rule_section_title(mode))
     if prompt_data.rules:
         lines.extend(f"- {fact.value} ({fact.source})" for fact in prompt_data.rules)
     else:
@@ -149,7 +150,7 @@ def render_prompt(prompt_data: PromptData, mode: str) -> str:
             "- No explicit contribution rules were extracted from CONTRIBUTING.md or AGENTS.md."
         )
     lines.append("")
-    lines.append("## Validation Commands")
+    lines.append(command_section_title(mode))
     if prompt_data.commands:
         lines.extend(f"- `{fact.value}` ({fact.source})" for fact in prompt_data.commands)
     else:
@@ -157,11 +158,16 @@ def render_prompt(prompt_data: PromptData, mode: str) -> str:
             "- No explicit validation commands were extracted from CONTRIBUTING.md or workflows."
         )
     lines.append("")
-    lines.append("## Protected Paths")
+    lines.append(path_section_title(mode))
     if prompt_data.protected_paths:
         lines.extend(f"- {fact.value} ({fact.source})" for fact in prompt_data.protected_paths)
     else:
         lines.append("- No CODEOWNERS protected paths were extracted.")
+    checklist = build_mode_checklist(prompt_data, mode)
+    if checklist:
+        lines.append("")
+        lines.append(checklist_section_title(mode))
+        lines.extend(f"- {fact.value} ({fact.source})" for fact in checklist)
     lines.append("")
     lines.append("## Scoring / Registry Notes")
     lines.extend(f"- {fact.value} ({fact.source})" for fact in prompt_data.registry_notes)
@@ -267,3 +273,181 @@ def dedupe_strings(items: list[str]) -> list[str]:
             seen.add(item)
             result.append(item)
     return result
+
+
+def rank_rules(rules: list[SourceFact], mode: str) -> list[SourceFact]:
+    deduped = dedupe_facts(rules, limit=32)
+    ordered = sorted(deduped, key=rule_priority)
+    if mode == "reviewer":
+        ordered = sorted(deduped, key=review_rule_priority)
+    return ordered[:8]
+
+
+def rank_commands(commands: list[SourceFact], mode: str) -> list[SourceFact]:
+    deduped = dedupe_facts(commands, limit=40)
+    if mode == "reviewer":
+        ordered = sorted(deduped, key=review_command_priority)
+    else:
+        ordered = sorted(deduped, key=command_priority)
+    return ordered[:8]
+
+
+def rule_priority(fact: SourceFact) -> tuple[int, int]:
+    source = fact.source.lower()
+    value = fact.value.lower()
+    source_rank = 0
+    if source.endswith("contributing.md"):
+        source_rank = 0
+    elif source.endswith("readme.md"):
+        source_rank = 1
+    elif source.endswith("agents.md"):
+        source_rank = 2
+    else:
+        source_rank = 3
+
+    value_rank = 2
+    if any(keyword in value for keyword in ("must", "mandatory", "do not", "don't", "required")):
+        value_rank = 0
+    elif any(keyword in value for keyword in ("target", "before opening", "keep", "sources")):
+        value_rank = 1
+    return (source_rank, value_rank)
+
+
+def review_rule_priority(fact: SourceFact) -> tuple[int, int]:
+    source = fact.source.lower()
+    value = fact.value.lower()
+    source_rank = 0 if source.endswith("contributing.md") else 1
+    value_rank = 2
+    if any(
+        keyword in value
+        for keyword in ("must", "mandatory", "do not", "don't", "required", "closed", "rejected")
+    ):
+        value_rank = 0
+    elif any(keyword in value for keyword in ("review", "evidence", "visual", "target", "focus")):
+        value_rank = 1
+    return (source_rank, value_rank)
+
+
+def command_priority(fact: SourceFact) -> tuple[int, int, str]:
+    value = fact.value.lower()
+    source = fact.source.lower()
+    command_rank = 3
+    if any(token in value for token in ("test", "pytest", "nextest")):
+        command_rank = 0
+    elif any(token in value for token in ("lint", "clippy", "ruff", "fmt", "format")):
+        command_rank = 1
+    elif any(token in value for token in ("build", "check", "validate", "audit")):
+        command_rank = 2
+
+    source_rank = 0 if source.endswith("contributing.md") else 1
+    return (command_rank, source_rank, fact.value)
+
+
+def review_command_priority(fact: SourceFact) -> tuple[int, int, str]:
+    value = fact.value.lower()
+    source = fact.source.lower()
+    command_rank = 3
+    if any(token in value for token in ("test", "pytest", "nextest", "validate", "coverage")):
+        command_rank = 0
+    elif any(token in value for token in ("lint", "clippy", "ruff", "fmt", "format", "check")):
+        command_rank = 1
+    elif any(token in value for token in ("build", "audit")):
+        command_rank = 2
+    source_rank = 0 if source.endswith("contributing.md") else 1
+    return (command_rank, source_rank, fact.value)
+
+
+def rule_section_title(mode: str) -> str:
+    return "## Review Focus" if mode == "reviewer" else "## Contribution Rules"
+
+
+def command_section_title(mode: str) -> str:
+    return "## Checks To Confirm" if mode == "reviewer" else "## Validation Commands"
+
+
+def path_section_title(mode: str) -> str:
+    return "## High-Risk Paths" if mode == "reviewer" else "## Protected Paths"
+
+
+def checklist_section_title(mode: str) -> str:
+    if mode == "reviewer":
+        return "## PromptForge Review Checklist"
+    return "## PromptForge PR Checklist"
+
+
+def build_mode_checklist(prompt_data: PromptData, mode: str) -> list[SourceFact]:
+    if mode == "reviewer":
+        return build_reviewer_checklist(prompt_data)
+    return build_contributor_checklist(prompt_data)
+
+
+def build_reviewer_checklist(prompt_data: PromptData) -> list[SourceFact]:
+    checklist: list[SourceFact] = []
+    if prompt_data.commands:
+        checklist.append(
+            SourceFact(
+                "Confirm the PR includes or references the relevant validation commands above.",
+                prompt_data.commands[0].source,
+            )
+        )
+    if prompt_data.protected_paths:
+        checklist.append(
+            SourceFact(
+                "Confirm the diff does not touch protected or maintainer-owned paths "
+                "unintentionally.",
+                prompt_data.protected_paths[0].source,
+            )
+        )
+    for fact in prompt_data.rules:
+        lowered = fact.value.lower()
+        if "visual evidence" in lowered or "screenshots" in lowered:
+            checklist.append(
+                SourceFact("Confirm the PR includes the required visual evidence.", fact.source)
+            )
+            break
+    for fact in prompt_data.rules:
+        lowered = fact.value.lower()
+        if "target" in lowered and (
+            "test" in lowered or "main" in lowered or "origin/main" in lowered
+        ):
+            checklist.append(
+                SourceFact("Confirm the PR targets the expected branch.", fact.source)
+            )
+            break
+    return dedupe_facts(checklist, limit=4)
+
+
+def build_contributor_checklist(prompt_data: PromptData) -> list[SourceFact]:
+    checklist: list[SourceFact] = []
+    if prompt_data.commands:
+        checklist.append(
+            SourceFact(
+                "Run the most relevant validation commands above before opening the PR.",
+                prompt_data.commands[0].source,
+            )
+        )
+    for fact in prompt_data.rules:
+        lowered = fact.value.lower()
+        if "target" in lowered and (
+            "test" in lowered or "main" in lowered or "origin/main" in lowered
+        ):
+            checklist.append(SourceFact("Target the expected branch for your PR.", fact.source))
+            break
+    if prompt_data.protected_paths:
+        checklist.append(
+            SourceFact(
+                "Avoid changing protected or maintainer-owned paths unless explicitly intended.",
+                prompt_data.protected_paths[0].source,
+            )
+        )
+    for fact in prompt_data.rules:
+        lowered = fact.value.lower()
+        if "visual evidence" in lowered or "screenshots" in lowered:
+            checklist.append(
+                SourceFact(
+                    "Include the required visual evidence for visible UI changes.",
+                    fact.source,
+                )
+            )
+            break
+    return dedupe_facts(checklist, limit=4)

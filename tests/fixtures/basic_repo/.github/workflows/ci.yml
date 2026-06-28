@@ -1,8 +1,0 @@
-name: CI
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - run: pytest
-      - run: ruff check .

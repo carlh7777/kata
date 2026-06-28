@@ -40,6 +40,14 @@ RULE_KEYWORDS = (
     "review",
 )
 
+AGENT_RULE_KEYWORDS = (
+    "must",
+    "do not",
+    "don't",
+    "mandatory",
+    "when in doubt",
+)
+
 
 def first_existing(root: Path, candidates: tuple[str, ...]) -> Path | None:
     for candidate in candidates:
@@ -85,10 +93,11 @@ def extract_summary(readme_text: str, source: str) -> SourceFact | None:
 
 def extract_rules(text: str, source: str) -> list[SourceFact]:
     rules: list[SourceFact] = []
+    source_is_agents = source.endswith("AGENTS.md")
     for candidate in sentence_candidates(text):
         cleaned = compress_rule_text(clean_markdown_text(candidate))
         lowered = cleaned.lower()
-        if not is_rule_candidate(cleaned, lowered):
+        if not is_rule_candidate(cleaned, lowered, source_is_agents):
             continue
         rules.append(SourceFact(cleaned, source))
     return dedupe_facts(rules, limit=8)
@@ -128,16 +137,23 @@ def sentence_candidates(text: str) -> list[str]:
     candidates: list[str] = []
     in_code_block = False
     paragraph_parts: list[str] = []
+    list_item_parts: list[str] = []
 
     def flush_paragraph() -> None:
         if paragraph_parts:
             candidates.append(" ".join(paragraph_parts))
             paragraph_parts.clear()
 
+    def flush_list_item() -> None:
+        if list_item_parts:
+            candidates.append(" ".join(list_item_parts))
+            list_item_parts.clear()
+
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
         if line.strip().startswith("```"):
             flush_paragraph()
+            flush_list_item()
             in_code_block = not in_code_block
             continue
         if in_code_block:
@@ -145,20 +161,28 @@ def sentence_candidates(text: str) -> list[str]:
         stripped = line.strip()
         if not stripped:
             flush_paragraph()
+            flush_list_item()
             continue
         if stripped.startswith("#"):
             flush_paragraph()
+            flush_list_item()
             continue
         if stripped.startswith(("- ", "* ")):
             flush_paragraph()
-            candidates.append(stripped[2:].strip())
+            flush_list_item()
+            list_item_parts.append(stripped[2:].strip())
             continue
         if re.match(r"^\d+\.\s+", stripped):
             flush_paragraph()
-            candidates.append(re.sub(r"^\d+\.\s+", "", stripped))
+            flush_list_item()
+            list_item_parts.append(re.sub(r"^\d+\.\s+", "", stripped))
+            continue
+        if list_item_parts:
+            list_item_parts.append(stripped)
             continue
         paragraph_parts.append(stripped)
     flush_paragraph()
+    flush_list_item()
     return candidates
 
 
@@ -251,16 +275,20 @@ def is_summary_candidate(text: str) -> bool:
     return bool(re.search(r"[A-Za-z]", text))
 
 
-def is_rule_candidate(cleaned: str, lowered: str) -> bool:
+def is_rule_candidate(cleaned: str, lowered: str, source_is_agents: bool) -> bool:
     if len(cleaned) < 25:
         return False
     if cleaned.count(" ") < 4:
         return False
     if not any(keyword in lowered for keyword in RULE_KEYWORDS):
         return False
+    if source_is_agents and not any(keyword in lowered for keyword in AGENT_RULE_KEYWORDS):
+        return False
     if "skill orchestrates" in lowered:
         return False
     if "/review-impl" in cleaned:
+        return False
+    if "open-source" in lowered and "rules engine" in lowered:
         return False
     if cleaned.endswith((":", "->")):
         return False
