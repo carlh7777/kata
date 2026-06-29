@@ -1,1 +1,0 @@
-Missing required link: https://docs.learnbittensor.org/resources/glossary#stake-weight

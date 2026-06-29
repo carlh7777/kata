@@ -1,3 +1,0 @@
-Created [content/pages/delayed_proxies/index.mdx](/home/ubuntu/Videos/study/PromptForge/runs/e35ventura__taopedia-articles-20260628T201644Z/tasks/add-delayed-proxies-article/baseline/workspace/content/pages/delayed_proxies/index.mdx) with the exact required front matter, headings, internal links, and source links. The article explains both core ideas: delayed proxies create a review window before execution, and the pending action can be canceled during that window.
-
-Validation was limited to a manual file check. I did not run broader repo validation commands.

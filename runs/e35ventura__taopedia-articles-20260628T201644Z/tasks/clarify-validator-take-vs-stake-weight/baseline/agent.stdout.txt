@@ -1,3 +1,0 @@
-Updated [content/pages/validator_take/index.mdx](/home/ubuntu/Videos/study/PromptForge/runs/e35ventura__taopedia-articles-20260628T201644Z/tasks/clarify-validator-take-vs-stake-weight/baseline/workspace/content/pages/validator_take/index.mdx) with the two required sections, clarified that validator take is a post-emission distribution split rather than stake weight or consensus influence, and added the required internal links to `[[Delegation Rewards]]`, `[[Effective Stake]]`, and `[[Yuma Consensus]]` while keeping primary-source citations in place.
-
-Validation run: `rg` checks for the required headings and internal links in the target file. I did not run broader repo validation.

@@ -1,3 +1,0 @@
-Created [content/pages/delayed_proxies/index.mdx](/home/ubuntu/Videos/study/PromptForge/runs/e35ventura__taopedia-articles-20260628T200828Z/tasks/add-delayed-proxies-article/baseline/workspace/content/pages/delayed_proxies/index.mdx) with the exact required front matter, required section headings, the specified internal links, both required source links, and explicit coverage of the review window and cancellation behavior.
-
-Validation run: `sed -n '1,220p' content/pages/delayed_proxies/index.mdx` and `git status --short -- content/pages/delayed_proxies/index.mdx` (shows only the new target file in this repo path).

@@ -1,3 +1,0 @@
-Updated `content/pages/validator_take/index.mdx` only.
-
-Added the required sections `## Validator Take Is Not Stake Weight` and `## Reader Shortcut`, and clarified that validator take is a post-dividend distribution split, not a measure of validator influence in consensus. The article now includes the required internal links: `[[Delegation Rewards]]`, `[[Effective Stake]]`, and `[[Yuma Consensus]]`, while keeping primary-source grounding in the Bittensor docs.

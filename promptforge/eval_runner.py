@@ -12,6 +12,7 @@ from promptforge.baseline import generate_baseline_prompt_from_repository
 from promptforge.config import resolve_registry_url
 from promptforge.eval_pack import EvalPackValidationResult, discover_eval_pack_tasks
 from promptforge.generator import generate_prompt_from_repository
+from promptforge.provenance import EVALUATOR_VERSION, pool_fingerprint
 from promptforge.repository import resolve_repository
 
 IGNORED_COPY_DIRS = (
@@ -94,6 +95,7 @@ def run_eval(
         checks_timeout_seconds=checks_timeout_seconds,
         run_label=None,
         run_kind="eval",
+        metadata={"reference_workflow": "baseline-vs-generated"},
     )
 
 
@@ -110,6 +112,7 @@ def run_prompt_variants(
     checks_timeout_seconds: int | None = None,
     run_label: str | None = None,
     run_kind: str = "eval",
+    metadata: dict[str, str] | None = None,
 ) -> EvalRunSummary:
     validations = discover_eval_pack_tasks(eval_pack_path)
     invalid = [result for result in validations if not result.is_valid]
@@ -120,6 +123,7 @@ def run_prompt_variants(
             f"Invalid task directories: {invalid_names}"
         )
     selected_validations = select_task_validations(validations, task_names)
+    selected_roots = [result.root for result in selected_validations]
     task_ids = [result.root.name for result in selected_validations]
     if run_label is not None:
         run_name = run_label
@@ -185,7 +189,11 @@ def run_prompt_variants(
         created_at=datetime.now(UTC).isoformat(),
         tasks=task_summaries,
         run_kind=run_kind,
-        metadata={"task_count": str(len(task_summaries))},
+        metadata=build_run_metadata(
+            task_ids=task_ids,
+            task_roots=selected_roots,
+            extra=metadata,
+        ),
     )
     write_summary(run_root / "run_summary.json", summary)
     return summary
@@ -363,6 +371,23 @@ def run_process(
             )
             return 124
     return completed.returncode
+
+
+def build_run_metadata(
+    *,
+    task_ids: list[str],
+    task_roots: list[Path],
+    extra: dict[str, str] | None,
+) -> dict[str, str]:
+    metadata = {
+        "evaluator_version": EVALUATOR_VERSION,
+        "task_count": str(len(task_ids)),
+        "task_ids": ",".join(task_ids),
+        "task_pool_fingerprint": pool_fingerprint(task_roots),
+    }
+    if extra:
+        metadata.update(extra)
+    return metadata
 
 
 def build_env(

@@ -1,3 +1,0 @@
-.github/**
-scripts/**
-package.json

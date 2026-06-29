@@ -18,6 +18,11 @@ def test_render_frontier_manifest_includes_primary_and_holdout_tasks(tmp_path: P
                 frontier_prompt="/tmp/frontier.md",
                 primary_tasks=["task-a", "task-b"],
                 holdout_tasks=["task-c"],
+                evaluator_version="2026-06-29.v1",
+                baseline_prompt_hash="a" * 64,
+                frontier_prompt_hash="b" * 64,
+                primary_pool_fingerprint="c" * 64,
+                holdout_pool_fingerprint="d" * 64,
                 frontier_updated_at="2026-06-28T01:00:00+00:00",
                 frontier_source="run-123",
             )
@@ -29,6 +34,9 @@ def test_render_frontier_manifest_includes_primary_and_holdout_tasks(tmp_path: P
     assert "Primary tasks: task-a, task-b" in rendered
     assert "Holdout tasks: task-c" in rendered
     assert "Frontier source: run-123" in rendered
+    assert "Evaluator version: 2026-06-29.v1" in rendered
+    assert "Baseline prompt hash: aaaaaaaaaaaa" in rendered
+    assert "Primary pool fingerprint: cccccccccccc" in rendered
 
 
 def test_promotion_reason_explains_holdout_failure() -> None:

@@ -11,6 +11,7 @@ from promptforge.frontier import (
     FrontierModeConfig,
     load_frontier_manifest,
 )
+from promptforge.provenance import EVALUATOR_VERSION, sha256_text, short_hash
 
 
 @dataclass(frozen=True)
@@ -27,9 +28,15 @@ class ChallengeSummary:
     run_id: str
     manifest_path: str
     mode: str
+    evaluator_version: str
     baseline_prompt: str
     frontier_prompt: str
     candidate_prompt: str
+    baseline_prompt_hash: str
+    frontier_prompt_hash: str
+    candidate_prompt_hash: str
+    primary_pool_fingerprint: str | None
+    holdout_pool_fingerprint: str | None
     created_at: str
     primary: ChallengePoolSummary
     holdout: ChallengePoolSummary | None
@@ -58,6 +65,10 @@ def run_frontier_challenge(
     baseline_text = Path(mode_config.baseline_prompt).read_text(encoding="utf-8")
     frontier_text = Path(mode_config.frontier_prompt).read_text(encoding="utf-8")
     candidate_text = candidate_path.read_text(encoding="utf-8")
+    evaluator_version = mode_config.evaluator_version or EVALUATOR_VERSION
+    baseline_hash = mode_config.baseline_prompt_hash or sha256_text(baseline_text)
+    frontier_hash = mode_config.frontier_prompt_hash or sha256_text(frontier_text)
+    candidate_hash = sha256_text(candidate_text)
 
     primary_eval = run_prompt_variants(
         repo_ref=manifest.repo_ref,
@@ -72,6 +83,14 @@ def run_frontier_challenge(
         task_names=mode_config.primary_tasks,
         output_root=str(challenge_root / "primary"),
         run_label=f"{Path(eval_pack_path).resolve().name}-{mode}-primary",
+        metadata={
+            "evaluator_version": evaluator_version,
+            "pool_name": "primary",
+            "pool_fingerprint": mode_config.primary_pool_fingerprint or "",
+            "baseline_prompt_hash": baseline_hash,
+            "frontier_prompt_hash": frontier_hash,
+            "candidate_prompt_hash": candidate_hash,
+        },
         agent_timeout_seconds=agent_timeout_seconds,
         checks_timeout_seconds=checks_timeout_seconds,
     )
@@ -93,6 +112,14 @@ def run_frontier_challenge(
             task_names=mode_config.holdout_tasks,
             output_root=str(challenge_root / "holdout"),
             run_label=f"{Path(eval_pack_path).resolve().name}-{mode}-holdout",
+            metadata={
+                "evaluator_version": evaluator_version,
+                "pool_name": "holdout",
+                "pool_fingerprint": mode_config.holdout_pool_fingerprint or "",
+                "baseline_prompt_hash": baseline_hash,
+                "frontier_prompt_hash": frontier_hash,
+                "candidate_prompt_hash": candidate_hash,
+            },
             agent_timeout_seconds=agent_timeout_seconds,
             checks_timeout_seconds=checks_timeout_seconds,
         )
@@ -103,13 +130,19 @@ def run_frontier_challenge(
 
     reason = promotion_reason(primary_summary, holdout_summary)
     summary = ChallengeSummary(
-        schema_version=1,
+        schema_version=2,
         run_id=challenge_run_id,
         manifest_path=str(Path(eval_pack_path).expanduser().resolve() / "frontier.json"),
         mode=mode,
+        evaluator_version=evaluator_version,
         baseline_prompt=str(Path(mode_config.baseline_prompt).resolve()),
         frontier_prompt=str(Path(mode_config.frontier_prompt).resolve()),
         candidate_prompt=str(candidate_path),
+        baseline_prompt_hash=baseline_hash,
+        frontier_prompt_hash=frontier_hash,
+        candidate_prompt_hash=candidate_hash,
+        primary_pool_fingerprint=mode_config.primary_pool_fingerprint,
+        holdout_pool_fingerprint=mode_config.holdout_pool_fingerprint,
         created_at=datetime.now(UTC).isoformat(),
         primary=primary_summary,
         holdout=holdout_summary,
@@ -126,6 +159,18 @@ def render_challenge_summary(summary: ChallengeSummary) -> str:
     lines.append(f"Mode: {summary.mode}")
     lines.append(f"Manifest: `{summary.manifest_path}`")
     lines.append(f"Candidate prompt: `{summary.candidate_prompt}`")
+    lines.append(f"Evaluator version: {summary.evaluator_version}")
+    lines.append(f"Baseline prompt hash: {short_hash(summary.baseline_prompt_hash)}")
+    lines.append(f"Frontier prompt hash: {short_hash(summary.frontier_prompt_hash)}")
+    lines.append(f"Candidate prompt hash: {short_hash(summary.candidate_prompt_hash)}")
+    if summary.primary_pool_fingerprint:
+        lines.append(
+            f"Primary pool fingerprint: {short_hash(summary.primary_pool_fingerprint)}"
+        )
+    if summary.holdout_pool_fingerprint:
+        lines.append(
+            f"Holdout pool fingerprint: {short_hash(summary.holdout_pool_fingerprint)}"
+        )
     lines.append("")
     lines.append("Primary pool")
     lines.extend(render_pool(summary.primary))
@@ -147,9 +192,15 @@ def load_challenge_summary(path: str) -> ChallengeSummary:
         run_id=payload["run_id"],
         manifest_path=payload["manifest_path"],
         mode=payload["mode"],
+        evaluator_version=payload.get("evaluator_version", EVALUATOR_VERSION),
         baseline_prompt=payload["baseline_prompt"],
         frontier_prompt=payload["frontier_prompt"],
         candidate_prompt=payload["candidate_prompt"],
+        baseline_prompt_hash=payload.get("baseline_prompt_hash", ""),
+        frontier_prompt_hash=payload.get("frontier_prompt_hash", ""),
+        candidate_prompt_hash=payload.get("candidate_prompt_hash", ""),
+        primary_pool_fingerprint=payload.get("primary_pool_fingerprint"),
+        holdout_pool_fingerprint=payload.get("holdout_pool_fingerprint"),
         created_at=payload["created_at"],
         primary=ChallengePoolSummary(**payload["primary"]),
         holdout=ChallengePoolSummary(**holdout_payload) if holdout_payload else None,

@@ -10,6 +10,7 @@ and more useful.
 - Prefer pinned tasks and explicit checks over subjective judgment.
 - Treat benchmark and evaluator correctness as higher priority than prompt style.
 - Keep changes scoped and easy to audit.
+- Preserve benchmark provenance so results stay comparable over time.
 
 ## Local checks
 
@@ -45,6 +46,13 @@ PromptForge uses three prompt roles:
 
 A challenger should only be promoted when it beats the frontier on the primary
 pool and, when configured, on the holdout pool.
+
+Benchmark changes should also preserve clear provenance:
+
+- evaluator version
+- prompt hashes
+- task-pool fingerprints
+- explicit task ids
 
 ## Scope guidance
 

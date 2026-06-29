@@ -72,6 +72,23 @@ Competition flow:
 The baseline is not the prompt miners should use in production. It is the fixed
 control used to prove that repo-specific optimization is adding value.
 
+## Benchmark Provenance
+
+PromptForge now records benchmark provenance alongside eval and challenge
+results:
+
+- evaluator version
+- prompt hashes
+- task ids
+- task-pool fingerprints
+
+This matters because a prompt win is only meaningful if it was measured against
+the same evaluator and the same benchmark state. See
+`docs/evaluator-versioning.md` for the intended model.
+
+PromptForge's proposed benchmark score model is defined in
+`docs/SCORING.md`.
+
 ## How To Think About The Workflow
 
 PromptForge has two separate jobs:
@@ -135,6 +152,7 @@ That manifest currently defines:
 - a contributor frontier prompt
 - a primary task pool
 - a holdout task pool
+- evaluator and benchmark provenance for that frontier
 
 ## Quickstart
 
@@ -244,6 +262,7 @@ What is already solid:
 - benchmark-pack validation
 - stricter report and path-policy handling
 - frontier challenge workflow
+- evaluator-version and benchmark-provenance recording
 - prompt initialization for seeding a frontier
 - regression tests for evaluator behavior
 

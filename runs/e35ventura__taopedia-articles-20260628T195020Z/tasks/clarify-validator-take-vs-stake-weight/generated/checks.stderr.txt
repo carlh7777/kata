@@ -1,1 +1,0 @@
-Expected content/pages/validator_take/index.mdx to exist.

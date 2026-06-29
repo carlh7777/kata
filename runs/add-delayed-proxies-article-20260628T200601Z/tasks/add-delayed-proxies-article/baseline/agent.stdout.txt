@@ -1,3 +1,0 @@
-Added [content/pages/delayed_proxies/index.mdx](/home/ubuntu/Videos/study/PromptForge/runs/add-delayed-proxies-article-20260628T200601Z/tasks/add-delayed-proxies-article/baseline/workspace/content/pages/delayed_proxies/index.mdx) with the exact required front matter, headings, internal wiki links, source links, and the two key concepts: the review window before execution and cancellation during that window.
-
-Validation run: confirmed the file exists and checked path-scoped git status, which shows only `content/pages/delayed_proxies/index.mdx` as the workspace change for this task.

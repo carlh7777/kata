@@ -1,3 +1,0 @@
-Created [content/pages/delayed_proxies/index.mdx](/home/ubuntu/Videos/study/PromptForge/runs/add-delayed-proxies-article-20260628T200601Z/tasks/add-delayed-proxies-article/generated/workspace/content/pages/delayed_proxies/index.mdx) with the required front matter, sections, internal links, and source-backed explanation of the review window and cancellation behavior.
-
-`npm run format:check` and `npm run validate` could not run successfully in this workspace because required Node packages such as `prettier` and `gray-matter` are not installed.

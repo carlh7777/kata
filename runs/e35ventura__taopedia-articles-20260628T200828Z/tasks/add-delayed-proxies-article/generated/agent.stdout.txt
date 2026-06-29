@@ -1,3 +1,0 @@
-Created [content/pages/delayed_proxies/index.mdx](/home/ubuntu/Videos/study/PromptForge/runs/e35ventura__taopedia-articles-20260628T200828Z/tasks/add-delayed-proxies-article/generated/workspace/content/pages/delayed_proxies/index.mdx) with the exact required front matter, sections, wiki links, and source links.
-
-`npm run format:check` and `npm run validate` could not run to completion because this workspace is missing repo dependencies (`prettier` and `gray-matter`).

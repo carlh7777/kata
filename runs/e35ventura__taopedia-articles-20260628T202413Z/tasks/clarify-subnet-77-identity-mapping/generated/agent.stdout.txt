@@ -1,5 +1,0 @@
-Updated [content/pages/subnet_77/index.mdx](/home/ubuntu/Videos/study/PromptForge/runs/e35ventura__taopedia-articles-20260628T202413Z/tasks/clarify-subnet-77-identity-mapping/generated/workspace/content/pages/subnet_77/index.mdx) only.
-
-The article now includes `## Identity Mapping Boundary` and `## Pool Selection Boundary`, explains that miner liquidity positions live in external pools, that rewards require mapping an EVM address or position back to a Bittensor hotkey through registration, and that pool selection and reward attribution are separate steps. It also includes the required internal links `[[Yuma Consensus]]` and `[[Liquidity Positions]]`, and retains the required SN77 source links.
-
-I did not run repo validation commands.

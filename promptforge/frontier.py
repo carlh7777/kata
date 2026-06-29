@@ -8,8 +8,15 @@ from pathlib import Path
 from promptforge.baseline import generate_baseline_prompt
 from promptforge.eval_pack import discover_eval_pack_tasks
 from promptforge.generator import generate_prompt
+from promptforge.provenance import (
+    EVALUATOR_VERSION,
+    pool_fingerprint,
+    sha256_file,
+    sha256_text,
+    short_hash,
+)
 
-FRONTIER_SCHEMA_VERSION = 1
+FRONTIER_SCHEMA_VERSION = 2
 FRONTIER_FILENAME = "frontier.json"
 
 
@@ -19,6 +26,11 @@ class FrontierModeConfig:
     frontier_prompt: str
     primary_tasks: list[str]
     holdout_tasks: list[str] = field(default_factory=list)
+    evaluator_version: str | None = None
+    baseline_prompt_hash: str | None = None
+    frontier_prompt_hash: str | None = None
+    primary_pool_fingerprint: str | None = None
+    holdout_pool_fingerprint: str | None = None
     frontier_updated_at: str | None = None
     frontier_source: str | None = None
 
@@ -76,6 +88,7 @@ def init_frontier(
         )
 
     available_tasks = [result.root.name for result in validations]
+    task_roots_by_name = {result.root.name: result.root for result in validations}
     selected_primary = primary_tasks or available_tasks
     selected_holdout = holdout_tasks or []
     ensure_known_tasks(selected_primary, available_tasks, label="primary")
@@ -96,6 +109,8 @@ def init_frontier(
     frontier_path = prompt_dir / "frontier.md"
     baseline_path.write_text(generate_baseline_prompt(repo_ref, mode) + "\n", encoding="utf-8")
     frontier_path.write_text(generate_prompt(repo_ref, mode, registry_url) + "\n", encoding="utf-8")
+    primary_pool = [task_roots_by_name[task_id] for task_id in selected_primary]
+    holdout_pool = [task_roots_by_name[task_id] for task_id in selected_holdout]
 
     manifest = existing_or_new_manifest(repo_ref=repo_ref, eval_pack_path=eval_pack_path)
     updated_modes = dict(manifest.modes)
@@ -104,6 +119,11 @@ def init_frontier(
         frontier_prompt=str(frontier_path.resolve()),
         primary_tasks=selected_primary,
         holdout_tasks=selected_holdout,
+        evaluator_version=EVALUATOR_VERSION,
+        baseline_prompt_hash=sha256_file(baseline_path),
+        frontier_prompt_hash=sha256_file(frontier_path),
+        primary_pool_fingerprint=pool_fingerprint(primary_pool),
+        holdout_pool_fingerprint=pool_fingerprint(holdout_pool) if holdout_pool else None,
         frontier_updated_at=timestamp_now(),
         frontier_source="promptforge-init",
     )
@@ -124,6 +144,7 @@ def update_frontier_prompt(
     mode: str,
     new_prompt_text: str,
     source: str,
+    evaluator_version: str | None = None,
 ) -> FrontierManifest:
     manifest = load_frontier_manifest(eval_pack_path)
     if mode not in manifest.modes:
@@ -131,12 +152,18 @@ def update_frontier_prompt(
     mode_config = manifest.modes[mode]
     frontier_path = Path(mode_config.frontier_prompt)
     frontier_path.write_text(new_prompt_text.rstrip() + "\n", encoding="utf-8")
+    frontier_hash = sha256_text(new_prompt_text.rstrip() + "\n")
     updated_modes = dict(manifest.modes)
     updated_modes[mode] = FrontierModeConfig(
         baseline_prompt=mode_config.baseline_prompt,
         frontier_prompt=mode_config.frontier_prompt,
         primary_tasks=mode_config.primary_tasks,
         holdout_tasks=mode_config.holdout_tasks,
+        evaluator_version=evaluator_version or mode_config.evaluator_version or EVALUATOR_VERSION,
+        baseline_prompt_hash=mode_config.baseline_prompt_hash,
+        frontier_prompt_hash=frontier_hash,
+        primary_pool_fingerprint=mode_config.primary_pool_fingerprint,
+        holdout_pool_fingerprint=mode_config.holdout_pool_fingerprint,
         frontier_updated_at=timestamp_now(),
         frontier_source=source,
     )
@@ -174,6 +201,26 @@ def render_frontier_manifest(manifest: FrontierManifest, mode: str | None = None
             lines.append(f"- Frontier updated: {mode_config.frontier_updated_at}")
         if mode_config.frontier_source:
             lines.append(f"- Frontier source: {mode_config.frontier_source}")
+        if mode_config.evaluator_version:
+            lines.append(f"- Evaluator version: {mode_config.evaluator_version}")
+        if mode_config.baseline_prompt_hash:
+            lines.append(
+                f"- Baseline prompt hash: {short_hash(mode_config.baseline_prompt_hash)}"
+            )
+        if mode_config.frontier_prompt_hash:
+            lines.append(
+                f"- Frontier prompt hash: {short_hash(mode_config.frontier_prompt_hash)}"
+            )
+        if mode_config.primary_pool_fingerprint:
+            lines.append(
+                "- Primary pool fingerprint: "
+                f"{short_hash(mode_config.primary_pool_fingerprint)}"
+            )
+        if mode_config.holdout_pool_fingerprint:
+            lines.append(
+                "- Holdout pool fingerprint: "
+                f"{short_hash(mode_config.holdout_pool_fingerprint)}"
+            )
         lines.append("")
     return "\n".join(lines).rstrip()
 

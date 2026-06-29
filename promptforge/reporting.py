@@ -31,10 +31,16 @@ def render_report(run_ref: str) -> str:
     lines.append(f"# PromptForge Eval Report: {summary['run_id']}")
     lines.append("")
     lines.append(f"- Created: {summary['created_at']}")
+    lines.append(f"- Run kind: {summary.get('run_kind', 'eval')}")
     lines.append(f"- Mode: {summary['mode']}")
     lines.append(f"- Requested repo: `{summary['requested_repo_ref']}`")
     lines.append(f"- Eval pack: `{summary['eval_pack']}`")
     lines.append(f"- Agent command: `{summary['agent_command']}`")
+    metadata = summary.get("metadata") or {}
+    if metadata.get("evaluator_version"):
+        lines.append(f"- Evaluator version: `{metadata['evaluator_version']}`")
+    if metadata.get("task_pool_fingerprint"):
+        lines.append(f"- Task pool fingerprint: `{metadata['task_pool_fingerprint']}`")
     lines.append("")
     lines.append("## Measurement Basis")
     lines.append("- Task solved is measured by the task `checks.sh` exit status.")

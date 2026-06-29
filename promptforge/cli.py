@@ -256,9 +256,12 @@ def handle_eval(args: argparse.Namespace) -> int:
     )
     print(
         f"Created eval run: {summary.run_id}\n"
+        f"Run kind: {summary.run_kind}\n"
         f"Mode: {summary.mode}\n"
         f"Requested repo: {summary.requested_repo_ref}\n"
-        f"Eval pack: {summary.eval_pack}"
+        f"Eval pack: {summary.eval_pack}\n"
+        f"Evaluator version: {summary.metadata.get('evaluator_version', 'unknown')}\n"
+        f"Task pool fingerprint: {summary.metadata.get('task_pool_fingerprint', 'unknown')}"
     )
     for task in summary.tasks:
         print(f"Task: {task.task_id}")
@@ -303,6 +306,7 @@ def handle_frontier_promote(args: argparse.Namespace) -> int:
         mode=summary.mode,
         new_prompt_text=candidate_text,
         source=summary.run_id,
+        evaluator_version=summary.evaluator_version,
     )
     print(render_frontier_manifest(manifest, summary.mode))
     return 0

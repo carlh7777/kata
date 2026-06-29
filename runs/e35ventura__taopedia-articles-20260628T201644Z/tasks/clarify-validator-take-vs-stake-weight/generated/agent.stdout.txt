@@ -1,5 +1,0 @@
-Updated [content/pages/validator_take/index.mdx](/home/ubuntu/Videos/study/PromptForge/runs/e35ventura__taopedia-articles-20260628T201644Z/tasks/clarify-validator-take-vs-stake-weight/generated/workspace/content/pages/validator_take/index.mdx) only.
-
-The article now includes `## Validator Take Is Not Stake Weight` and `## Reader Shortcut`, explicitly says validator take is a distribution split applied after validator-side emissions or dividends already exist, and clarifies that it is not a measure of validator influence in consensus. It also includes the required internal links: `[[Delegation Rewards]]`, `[[Effective Stake]]`, and `[[Yuma Consensus]]`, with primary-source grounding for both validator take and stake weight vocabulary.
-
-I did not run repo validation commands.

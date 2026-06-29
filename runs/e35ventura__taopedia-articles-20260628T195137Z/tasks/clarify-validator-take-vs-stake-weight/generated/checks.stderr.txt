@@ -1,1 +1,0 @@
-Unexpected changed paths: ['/home/ubuntu/Videos/study/PromptForge/runs/e35ventura__taopedia-articles-20260628T195137Z/tasks/clarify-validator-take-vs-stake-weight/generated/workspace/content/pages/validator_take/index.mdx']

@@ -1,3 +1,0 @@
-# Repo source for this eval task.
-# Format: <repo-url-or-path>@<git-ref>
-https://github.com/e35ventura/taopedia-articles.git@ebf7257a01fd99abb5db9f37d96062fb42e789ec
