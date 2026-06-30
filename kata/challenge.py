@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files
 from kata.benchmarks import resolve_eval_pack_path
 from kata.eval_runner import ArtifactVariant, EvalRunSummary, run_artifact_variants
 from kata.frontier import (
@@ -12,8 +13,10 @@ from kata.frontier import (
     FrontierManifest,
     FrontierModeConfig,
     load_frontier_manifest,
+    resolve_baseline_artifact_hash,
+    resolve_frontier_artifact_hash,
 )
-from kata.provenance import EVALUATOR_VERSION, sha256_text, short_hash
+from kata.provenance import EVALUATOR_VERSION, short_hash
 
 
 @dataclass(frozen=True)
@@ -35,12 +38,12 @@ class ChallengeSummary:
     manifest_path: str
     mode: str
     evaluator_version: str
-    baseline_prompt: str
-    frontier_prompt: str
-    candidate_prompt: str
-    baseline_prompt_hash: str
-    frontier_prompt_hash: str
-    candidate_prompt_hash: str
+    baseline_artifact: str
+    frontier_artifact: str
+    candidate_artifact: str
+    baseline_artifact_hash: str
+    frontier_artifact_hash: str
+    candidate_artifact_hash: str
     primary_pool_fingerprint: str | None
     holdout_pool_fingerprint: str | None
     promotion_margin_points: float
@@ -55,7 +58,7 @@ def run_frontier_challenge(
     *,
     eval_pack_path: str,
     mode: str,
-    candidate_prompt_path: str,
+    candidate_artifact_path: str,
     agent_command: str,
     output_root: str | None = None,
     agent_timeout_seconds: int | None = None,
@@ -64,19 +67,19 @@ def run_frontier_challenge(
     eval_pack_root = resolve_eval_pack_path(eval_pack_path)
     manifest = load_frontier_manifest(eval_pack_path)
     mode_config = resolve_mode(manifest, mode)
-    candidate_path = Path(candidate_prompt_path).expanduser().resolve()
+    candidate_path = Path(candidate_artifact_path).expanduser().resolve()
     output_base = Path(output_root) if output_root else Path("runs")
     challenge_run_id = build_challenge_id(eval_pack_root.name, mode)
     challenge_root = output_base / challenge_run_id
     challenge_root.mkdir(parents=True, exist_ok=False)
 
-    baseline_text = Path(mode_config.baseline_prompt).read_text(encoding="utf-8")
-    frontier_text = Path(mode_config.frontier_prompt).read_text(encoding="utf-8")
-    candidate_text = candidate_path.read_text(encoding="utf-8")
+    baseline_files = load_bundle_files(Path(mode_config.baseline_artifact).expanduser().resolve())
+    frontier_files = load_bundle_files(Path(mode_config.frontier_artifact).expanduser().resolve())
+    candidate_files = load_bundle_files(candidate_path)
     evaluator_version = mode_config.evaluator_version or EVALUATOR_VERSION
-    baseline_hash = mode_config.baseline_prompt_hash or sha256_text(baseline_text)
-    frontier_hash = mode_config.frontier_prompt_hash or sha256_text(frontier_text)
-    candidate_hash = sha256_text(candidate_text)
+    baseline_hash = resolve_baseline_artifact_hash(mode_config)
+    frontier_hash = resolve_frontier_artifact_hash(mode_config)
+    candidate_hash = sha256_bundle_dict(candidate_files)
     promotion_margin_points = mode_config.promotion_margin_points
 
     primary_eval = run_artifact_variants(
@@ -85,9 +88,21 @@ def run_frontier_challenge(
         mode=mode,
         agent_command=agent_command,
         artifact_variants=[
-            ArtifactVariant(name="baseline", filename="baseline.md", content=baseline_text),
-            ArtifactVariant(name="frontier", filename="frontier.md", content=frontier_text),
-            ArtifactVariant(name="candidate", filename=candidate_path.name, content=candidate_text),
+            ArtifactVariant(
+                name="baseline",
+                files=baseline_files,
+                entrypoint=AGENT_ENTRY_FILENAME,
+            ),
+            ArtifactVariant(
+                name="frontier",
+                files=frontier_files,
+                entrypoint=AGENT_ENTRY_FILENAME,
+            ),
+            ArtifactVariant(
+                name="candidate",
+                files=candidate_files,
+                entrypoint=AGENT_ENTRY_FILENAME,
+            ),
         ],
         task_names=mode_config.primary_tasks,
         output_root=str(challenge_root / "primary"),
@@ -97,9 +112,9 @@ def run_frontier_challenge(
             "evaluator_version": evaluator_version,
             "pool_name": "primary",
             "pool_fingerprint": mode_config.primary_pool_fingerprint or "",
-            "baseline_prompt_hash": baseline_hash,
-            "frontier_prompt_hash": frontier_hash,
-            "candidate_prompt_hash": candidate_hash,
+            "baseline_artifact_hash": baseline_hash,
+            "frontier_artifact_hash": frontier_hash,
+            "candidate_artifact_hash": candidate_hash,
         },
         agent_timeout_seconds=agent_timeout_seconds,
         checks_timeout_seconds=checks_timeout_seconds,
@@ -115,12 +130,20 @@ def run_frontier_challenge(
             mode=mode,
             agent_command=agent_command,
             artifact_variants=[
-                ArtifactVariant(name="baseline", filename="baseline.md", content=baseline_text),
-                ArtifactVariant(name="frontier", filename="frontier.md", content=frontier_text),
+                ArtifactVariant(
+                    name="baseline",
+                    files=baseline_files,
+                    entrypoint=AGENT_ENTRY_FILENAME,
+                ),
+                ArtifactVariant(
+                    name="frontier",
+                    files=frontier_files,
+                    entrypoint=AGENT_ENTRY_FILENAME,
+                ),
                 ArtifactVariant(
                     name="candidate",
-                    filename=candidate_path.name,
-                    content=candidate_text,
+                    files=candidate_files,
+                    entrypoint=AGENT_ENTRY_FILENAME,
                 ),
             ],
             task_names=mode_config.holdout_tasks,
@@ -131,9 +154,9 @@ def run_frontier_challenge(
                 "evaluator_version": evaluator_version,
                 "pool_name": "holdout",
                 "pool_fingerprint": mode_config.holdout_pool_fingerprint or "",
-                "baseline_prompt_hash": baseline_hash,
-                "frontier_prompt_hash": frontier_hash,
-                "candidate_prompt_hash": candidate_hash,
+                "baseline_artifact_hash": baseline_hash,
+                "frontier_artifact_hash": frontier_hash,
+                "candidate_artifact_hash": candidate_hash,
             },
             agent_timeout_seconds=agent_timeout_seconds,
             checks_timeout_seconds=checks_timeout_seconds,
@@ -145,17 +168,17 @@ def run_frontier_challenge(
         promotion_margin_points=promotion_margin_points,
     )
     summary = ChallengeSummary(
-        schema_version=2,
+        schema_version=3,
         run_id=challenge_run_id,
         manifest_path=str(eval_pack_root / "frontier.json"),
         mode=mode,
         evaluator_version=evaluator_version,
-        baseline_prompt=str(Path(mode_config.baseline_prompt).resolve()),
-        frontier_prompt=str(Path(mode_config.frontier_prompt).resolve()),
-        candidate_prompt=str(candidate_path),
-        baseline_prompt_hash=baseline_hash,
-        frontier_prompt_hash=frontier_hash,
-        candidate_prompt_hash=candidate_hash,
+        baseline_artifact=str(Path(mode_config.baseline_artifact).resolve()),
+        frontier_artifact=str(Path(mode_config.frontier_artifact).resolve()),
+        candidate_artifact=str(candidate_path),
+        baseline_artifact_hash=baseline_hash,
+        frontier_artifact_hash=frontier_hash,
+        candidate_artifact_hash=candidate_hash,
         primary_pool_fingerprint=mode_config.primary_pool_fingerprint,
         holdout_pool_fingerprint=mode_config.holdout_pool_fingerprint,
         promotion_margin_points=promotion_margin_points,
@@ -174,11 +197,11 @@ def render_challenge_summary(summary: ChallengeSummary) -> str:
     lines.append(f"Challenge run: {summary.run_id}")
     lines.append(f"Mode: {summary.mode}")
     lines.append(f"Manifest: `{summary.manifest_path}`")
-    lines.append(f"Candidate prompt: `{summary.candidate_prompt}`")
+    lines.append(f"Candidate artifact: `{summary.candidate_artifact}`")
     lines.append(f"Evaluator version: {summary.evaluator_version}")
-    lines.append(f"Baseline prompt hash: {short_hash(summary.baseline_prompt_hash)}")
-    lines.append(f"Frontier prompt hash: {short_hash(summary.frontier_prompt_hash)}")
-    lines.append(f"Candidate prompt hash: {short_hash(summary.candidate_prompt_hash)}")
+    lines.append(f"Baseline artifact hash: {short_hash(summary.baseline_artifact_hash)}")
+    lines.append(f"Frontier artifact hash: {short_hash(summary.frontier_artifact_hash)}")
+    lines.append(f"Candidate artifact hash: {short_hash(summary.candidate_artifact_hash)}")
     if summary.primary_pool_fingerprint:
         lines.append(
             f"Primary pool fingerprint: {short_hash(summary.primary_pool_fingerprint)}"
@@ -204,18 +227,36 @@ def render_challenge_summary(summary: ChallengeSummary) -> str:
 def load_challenge_summary(path: str) -> ChallengeSummary:
     payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
     holdout_payload = payload.get("holdout")
+    baseline_artifact = payload.get("baseline_artifact")
+    if baseline_artifact is None:
+        baseline_artifact = payload["baseline_prompt"]
+    frontier_artifact = payload.get("frontier_artifact")
+    if frontier_artifact is None:
+        frontier_artifact = payload["frontier_prompt"]
+    candidate_artifact = payload.get("candidate_artifact")
+    if candidate_artifact is None:
+        candidate_artifact = payload["candidate_prompt"]
     return ChallengeSummary(
         schema_version=payload["schema_version"],
         run_id=payload["run_id"],
         manifest_path=payload["manifest_path"],
         mode=payload["mode"],
         evaluator_version=payload.get("evaluator_version", EVALUATOR_VERSION),
-        baseline_prompt=payload["baseline_prompt"],
-        frontier_prompt=payload["frontier_prompt"],
-        candidate_prompt=payload["candidate_prompt"],
-        baseline_prompt_hash=payload.get("baseline_prompt_hash", ""),
-        frontier_prompt_hash=payload.get("frontier_prompt_hash", ""),
-        candidate_prompt_hash=payload.get("candidate_prompt_hash", ""),
+        baseline_artifact=baseline_artifact,
+        frontier_artifact=frontier_artifact,
+        candidate_artifact=candidate_artifact,
+        baseline_artifact_hash=payload.get(
+            "baseline_artifact_hash",
+            payload.get("baseline_prompt_hash", ""),
+        ),
+        frontier_artifact_hash=payload.get(
+            "frontier_artifact_hash",
+            payload.get("frontier_prompt_hash", ""),
+        ),
+        candidate_artifact_hash=payload.get(
+            "candidate_artifact_hash",
+            payload.get("candidate_prompt_hash", ""),
+        ),
         primary_pool_fingerprint=payload.get("primary_pool_fingerprint"),
         holdout_pool_fingerprint=payload.get("holdout_pool_fingerprint"),
         promotion_margin_points=payload.get(
@@ -378,3 +419,15 @@ def build_challenge_id(eval_pack_name: str, mode: str) -> str:
 
 def write_challenge_summary(path: Path, summary: ChallengeSummary) -> None:
     path.write_text(json.dumps(asdict(summary), indent=2) + "\n", encoding="utf-8")
+
+
+def sha256_bundle_dict(files: dict[str, str]) -> str:
+    import hashlib
+
+    hasher = hashlib.sha256()
+    for relative_path in sorted(files):
+        hasher.update(relative_path.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(files[relative_path].encode("utf-8"))
+        hasher.update(b"\0")
+    return hasher.hexdigest()

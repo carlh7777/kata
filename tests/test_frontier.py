@@ -20,14 +20,14 @@ def test_render_frontier_manifest_includes_primary_and_holdout_tasks(tmp_path: P
         updated_at="2026-06-28T00:00:00+00:00",
         modes={
             "contributor": FrontierModeConfig(
-                baseline_prompt="/tmp/baseline.md",
-                frontier_prompt="/tmp/frontier.md",
+                baseline_artifact="/tmp/baseline_agent.py",
+                frontier_artifact="/tmp/frontier_agent.py",
                 primary_tasks=["task-a", "task-b"],
                 holdout_tasks=["task-c"],
                 promotion_margin_points=4.5,
                 evaluator_version="2026-06-29.v1",
-                baseline_prompt_hash="a" * 64,
-                frontier_prompt_hash="b" * 64,
+                baseline_artifact_hash="a" * 64,
+                frontier_artifact_hash="b" * 64,
                 primary_pool_fingerprint="c" * 64,
                 holdout_pool_fingerprint="d" * 64,
                 frontier_updated_at="2026-06-28T01:00:00+00:00",
@@ -43,7 +43,7 @@ def test_render_frontier_manifest_includes_primary_and_holdout_tasks(tmp_path: P
     assert "Frontier source: run-123" in rendered
     assert "Evaluator version: 2026-06-29.v1" in rendered
     assert "Promotion margin: 4.5 points" in rendered
-    assert "Baseline prompt hash: aaaaaaaaaaaa" in rendered
+    assert "Baseline artifact hash: aaaaaaaaaaaa" in rendered
     assert "Primary pool fingerprint: cccccccccccc" in rendered
 
 
@@ -83,8 +83,8 @@ def test_render_frontier_json_includes_mode_configuration(tmp_path: Path) -> Non
         updated_at="2026-06-28T00:00:00+00:00",
         modes={
             "contributor": FrontierModeConfig(
-                baseline_prompt="/tmp/baseline.md",
-                frontier_prompt="/tmp/frontier.md",
+                baseline_artifact="/tmp/baseline_agent.py",
+                frontier_artifact="/tmp/frontier_agent.py",
                 primary_tasks=["task-a"],
                 holdout_tasks=[],
                 promotion_margin_points=3.0,

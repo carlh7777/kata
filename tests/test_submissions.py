@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from kata.agent_bundle import AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME, write_agent_manifest
 from kata.frontier import (
     FRONTIER_SCHEMA_VERSION,
     FrontierManifest,
     FrontierModeConfig,
     write_frontier_manifest,
 )
-from kata.provenance import sha256_text
+from kata.provenance import sha256_directory, sha256_text
 from kata.submissions import (
     PR_ACTION_CLOSE_INVALID,
     PR_ACTION_CLOSE_LOSING,
@@ -17,6 +18,7 @@ from kata.submissions import (
     PR_ACTION_MERGE,
     PR_ACTION_RERUN_STALE,
     decide_submission_action,
+    hash_submission_bundle,
     init_submission,
     inspect_pull_request,
     validate_submission,
@@ -26,6 +28,10 @@ from kata.submissions import (
 VALID_AGENT = (
     "def solve(repo_path, issue, model, api_base, api_key):\n"
     "    return {\"success\": True, \"diff\": \"\"}\n"
+)
+SEED_AGENT = (
+    "def solve(repo_path, issue, model, api_base, api_key):\n"
+    "    return {\"diff\": \"\"}\n"
 )
 
 
@@ -54,12 +60,17 @@ def write_registry(
 
 def write_frontier_pack(registry_root: Path, repo_pack: str, repo_ref: str) -> Path:
     pack_root = registry_root / "benchmarks" / repo_pack
-    prompt_root = pack_root / "prompts" / "contributor"
-    prompt_root.mkdir(parents=True, exist_ok=True)
-    baseline_text = "# baseline\n"
-    frontier_text = "# frontier\n"
-    (prompt_root / "baseline.md").write_text(baseline_text, encoding="utf-8")
-    (prompt_root / "frontier.md").write_text(frontier_text, encoding="utf-8")
+    artifact_root = pack_root / "agents" / "contributor"
+    baseline_root = artifact_root / "baseline"
+    frontier_root = artifact_root / "frontier"
+    baseline_root.mkdir(parents=True, exist_ok=True)
+    frontier_root.mkdir(parents=True, exist_ok=True)
+    baseline_text = SEED_AGENT
+    frontier_text = SEED_AGENT
+    write_agent_manifest(baseline_root / AGENT_MANIFEST_FILENAME)
+    write_agent_manifest(frontier_root / AGENT_MANIFEST_FILENAME)
+    (baseline_root / AGENT_ENTRY_FILENAME).write_text(baseline_text, encoding="utf-8")
+    (frontier_root / AGENT_ENTRY_FILENAME).write_text(frontier_text, encoding="utf-8")
     manifest = FrontierManifest(
         schema_version=FRONTIER_SCHEMA_VERSION,
         repo_ref=repo_ref,
@@ -67,13 +78,19 @@ def write_frontier_pack(registry_root: Path, repo_pack: str, repo_ref: str) -> P
         updated_at="2026-06-29T00:00:00+00:00",
         modes={
             "contributor": FrontierModeConfig(
-                baseline_prompt=str((prompt_root / "baseline.md").resolve()),
-                frontier_prompt=str((prompt_root / "frontier.md").resolve()),
+                baseline_artifact=str(baseline_root.resolve()),
+                frontier_artifact=str(frontier_root.resolve()),
                 primary_tasks=["task-a"],
                 holdout_tasks=[],
                 evaluator_version="2026-06-29.v1",
-                baseline_prompt_hash=sha256_text(baseline_text),
-                frontier_prompt_hash=sha256_text(frontier_text),
+                baseline_artifact_hash=sha256_directory(
+                    baseline_root,
+                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+                ),
+                frontier_artifact_hash=sha256_directory(
+                    frontier_root,
+                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+                ),
                 primary_pool_fingerprint="a" * 64,
                 holdout_pool_fingerprint=None,
                 frontier_updated_at="2026-06-29T00:00:00+00:00",
@@ -89,24 +106,27 @@ def challenge_summary_payload(
     *,
     pack_root: Path,
     submission_root: Path,
-    frontier_prompt_hash: str,
-    candidate_prompt_hash: str,
+    frontier_artifact_hash: str,
+    candidate_artifact_hash: str,
 ) -> dict[str, object]:
-    baseline_prompt = pack_root / "prompts" / "contributor" / "baseline.md"
-    frontier_prompt = pack_root / "prompts" / "contributor" / "frontier.md"
-    candidate_prompt = submission_root / "agent.py"
+    baseline_artifact = pack_root / "agents" / "contributor" / "baseline"
+    frontier_artifact = pack_root / "agents" / "contributor" / "frontier"
+    candidate_artifact = submission_root
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "run_id": "challenge-1",
         "manifest_path": str((pack_root / "frontier.json").resolve()),
         "mode": "contributor",
         "evaluator_version": "2026-06-29.v1",
-        "baseline_prompt": str(baseline_prompt.resolve()),
-        "frontier_prompt": str(frontier_prompt.resolve()),
-        "candidate_prompt": str(candidate_prompt.resolve()),
-        "baseline_prompt_hash": sha256_text("# baseline\n"),
-        "frontier_prompt_hash": frontier_prompt_hash,
-        "candidate_prompt_hash": candidate_prompt_hash,
+        "baseline_artifact": str(baseline_artifact.resolve()),
+        "frontier_artifact": str(frontier_artifact.resolve()),
+        "candidate_artifact": str(candidate_artifact.resolve()),
+        "baseline_artifact_hash": sha256_directory(
+            baseline_artifact,
+            include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+        ),
+        "frontier_artifact_hash": frontier_artifact_hash,
+        "candidate_artifact_hash": candidate_artifact_hash,
         "primary_pool_fingerprint": "a" * 64,
         "holdout_pool_fingerprint": None,
         "promotion_margin_points": 3.0,
@@ -232,6 +252,80 @@ def test_validate_submission_rejects_missing_solve(
 
     assert not result.is_valid
     assert "Submission agent must define solve(...)." in result.reasons
+
+
+def test_init_submission_creates_agent_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-manifest",
+        output_root=str(tmp_path / "Kata" / "submissions"),
+    )
+
+    assert (submission_root / AGENT_MANIFEST_FILENAME).exists()
+
+
+def test_validate_submission_accepts_helper_only_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-helper",
+        output_root=str(repo_root / "submissions"),
+    )
+    helpers_root = submission_root / "helpers"
+    helpers_root.mkdir()
+    (helpers_root / "planner.py").write_text("def plan():\n    return 'ok'\n", encoding="utf-8")
+    (submission_root / "agent.py").write_text(VALID_AGENT, encoding="utf-8")
+
+    result = validate_submission(
+        str(submission_root),
+        changed_paths=[
+            "submissions/example__repo/contributor/miner-helper/helpers/planner.py",
+        ],
+        repo_root=str(repo_root),
+    )
+
+    assert result.is_valid
+
+
+def test_validate_submission_rejects_unexpected_bundle_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(registry_root, "example__repo", "/tmp/repo")
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="contributor",
+        submission_id="miner-badfile",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(VALID_AGENT, encoding="utf-8")
+    (submission_root / "notes.txt").write_text("bad\n", encoding="utf-8")
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert "Submission bundle contains unsupported files: notes.txt" in result.reasons
 
 
 def test_validate_submission_rejects_inactive_repo_pack(
@@ -380,15 +474,18 @@ def test_verify_submission_result_accepts_current_promotion_ready_result(
         "    return {\"success\": True, \"diff\": \"winner\"}\n"
     )
     (submission_root / "agent.py").write_text(candidate_text, encoding="utf-8")
-    candidate_hash = sha256_text(candidate_text)
+    candidate_hash = hash_submission_bundle(submission_root)
     summary_path = tmp_path / "challenge_summary.json"
     summary_path.write_text(
         json.dumps(
             challenge_summary_payload(
                 pack_root=pack_root,
                 submission_root=submission_root,
-                frontier_prompt_hash=sha256_text("# frontier\n"),
-                candidate_prompt_hash=candidate_hash,
+                frontier_artifact_hash=sha256_directory(
+                    pack_root / "agents" / "contributor" / "frontier",
+                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+                ),
+                candidate_artifact_hash=candidate_hash,
             )
         )
         + "\n",
@@ -430,8 +527,8 @@ def test_verify_submission_result_detects_stale_frontier(
             challenge_summary_payload(
                 pack_root=pack_root,
                 submission_root=submission_root,
-                frontier_prompt_hash=sha256_text("# older-frontier\n"),
-                candidate_prompt_hash=sha256_text(candidate_text),
+                frontier_artifact_hash=sha256_text("# older-frontier\n"),
+                candidate_artifact_hash=hash_submission_bundle(submission_root),
             )
         )
         + "\n",
@@ -442,7 +539,7 @@ def test_verify_submission_result_detects_stale_frontier(
 
     assert not result.frontier_is_current
     assert not result.auto_merge_ready
-    assert "Challenge result is stale because the frontier prompt has changed." in result.reasons
+    assert "Challenge result is stale because the frontier artifact has changed." in result.reasons
 
 
 def test_decide_submission_action_returns_merge_for_verified_winner(
@@ -471,8 +568,11 @@ def test_decide_submission_action_returns_merge_for_verified_winner(
             challenge_summary_payload(
                 pack_root=pack_root,
                 submission_root=submission_root,
-                frontier_prompt_hash=sha256_text("# frontier\n"),
-                candidate_prompt_hash=sha256_text(candidate_text),
+                frontier_artifact_hash=sha256_directory(
+                    pack_root / "agents" / "contributor" / "frontier",
+                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+                ),
+                candidate_artifact_hash=hash_submission_bundle(submission_root),
             )
         )
         + "\n",
@@ -511,8 +611,8 @@ def test_decide_submission_action_returns_rerun_for_stale_result(
             challenge_summary_payload(
                 pack_root=pack_root,
                 submission_root=submission_root,
-                frontier_prompt_hash=sha256_text("# stale-frontier\n"),
-                candidate_prompt_hash=sha256_text(candidate_text),
+                frontier_artifact_hash=sha256_text("# stale-frontier\n"),
+                candidate_artifact_hash=hash_submission_bundle(submission_root),
             )
         )
         + "\n",
@@ -548,8 +648,11 @@ def test_decide_submission_action_returns_close_for_loser(
     payload = challenge_summary_payload(
         pack_root=pack_root,
         submission_root=submission_root,
-        frontier_prompt_hash=sha256_text("# frontier\n"),
-        candidate_prompt_hash=sha256_text(candidate_text),
+        frontier_artifact_hash=sha256_directory(
+            pack_root / "agents" / "contributor" / "frontier",
+            include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+        ),
+        candidate_artifact_hash=hash_submission_bundle(submission_root),
     )
     payload["promotion_ready"] = False
     payload["promotion_reason"] = "candidate did not beat the current frontier on the primary score"

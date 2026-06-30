@@ -15,12 +15,14 @@ submissions/
     <mode>/
       <submission-id>/
         agent.py
+        agent_manifest.json
+        helpers/*.py
         submission.json
 ```
 
 Current scope:
 
-- single-file `agent.py` submissions
+- validator-owned Python agent bundles
 - one submission directory per PR
 - one repo-pack lane per submission
 
@@ -46,6 +48,24 @@ The validator owns:
 - benchmark tasks
 
 So miners compete on agent behavior, not on model routing or secret management.
+
+### `agent_manifest.json`
+
+This defines the validator-facing bundle contract.
+
+Current requirements:
+
+- `schema_version = 1`
+- `runtime = "python"`
+- `entrypoint = "agent.py"`
+
+### `helpers/*.py`
+
+Optional helper modules may live under `helpers/`.
+
+Current validator rule:
+
+- only Python files under `helpers/` are allowed
 
 ### `submission.json`
 
@@ -76,10 +96,11 @@ Recommended identity convention:
 A competition PR is valid only if:
 
 - it edits one submission directory
-- it changes `agent.py`
+- it changes at least one agent bundle file
 - it does not edit files outside that submission directory
 - `agent.py` exists and is not the scaffold placeholder
 - `agent.py` defines `solve(...)`
+- `agent_manifest.json` exists and matches the validator contract
 - it targets a repo-pack that is active in the benchmark registry
 - it targets an existing benchmark repo pack
 - the target pack already has a frontier manifest
@@ -110,14 +131,11 @@ uv run kata submission evaluate \
   --agent-command "$PWD/scripts/run_python_agent_eval.sh"
 ```
 
-The current evaluator supports a transition mode:
+The current evaluator is fully artifact-aware:
 
-- challenger submissions can be `agent.py`
-- existing baseline/frontier lane artifacts may still be prompt-backed
-- the runner is artifact-aware and can execute either path
-
-That keeps the migration working while the frontier seeding flow is being
-converted fully to agent artifacts.
+- challenger submissions use agent bundles
+- baseline lane state uses seeded agent artifacts
+- frontier lane state uses seeded or promoted agent artifacts
 
 ## Stale Frontier Protection
 

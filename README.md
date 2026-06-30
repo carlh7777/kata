@@ -39,8 +39,9 @@ Current MVP boundary:
 
 Transition note:
 
-- miner submissions now use the `agent.py` contract
-- some seeded lane artifacts are still prompt-backed while the migration is in progress
+- miner submissions now use the agent bundle contract:
+  `agent.py`, `agent_manifest.json`, and optional `helpers/*.py`
+- frontier and baseline lane state now use seeded agent artifacts
 
 ## Current MVP Scope
 
@@ -143,8 +144,8 @@ The usual workflow is:
 Tracked benchmark artifacts may also include:
 
 - `frontier.json`: repo competition manifest
-- `prompts/<mode>/baseline.md`
-- `prompts/<mode>/frontier.md`
+- `agents/<mode>/baseline/`
+- `agents/<mode>/frontier/`
 
 Generated eval runs are written to `runs/` and are ignored by git.
 
@@ -160,17 +161,20 @@ submissions/
     <mode>/
       <submission-id>/
         agent.py
+        agent_manifest.json
+        helpers/*.py
         submission.json
 ```
 
 Current validation rules:
 
 - PRs should only touch one submission directory
-- only `agent.py` and `submission.json` are allowed inside that submission
+- only bundle files and `submission.json` are allowed inside that submission
 - the repo-pack must be active in the benchmark registry
 - the target repo pack must already exist in the benchmark registry
 - the target mode must already be configured in that pack's `frontier.json`
 - `agent.py` must define `solve(...)`
+- `agent_manifest.json` must match the validator bundle contract
 
 Recommended identity convention:
 
@@ -206,8 +210,8 @@ That benchmark repo is the canonical source of:
 
 - benchmark task folders
 - `frontier.json`
-- `prompts/<mode>/baseline.md`
-- `prompts/<mode>/frontier.md`
+- `agents/<mode>/baseline/`
+- `agents/<mode>/frontier/`
 
 Kata still uses the same file-based task format, but the benchmark
 content should live in the benchmark registry repo, not inside the main
@@ -382,8 +386,8 @@ Challenge the frontier:
 uv run kata challenge \
   --eval-pack <repo-pack> \
   --mode contributor \
-  --candidate-prompt path/to/candidate.md \
-  --agent-command "$PWD/scripts/run_codex_eval.sh"
+  --candidate-agent path/to/agent.py \
+  --agent-command "$PWD/scripts/run_python_agent_eval.sh"
 ```
 
 Promote a winning challenger:

@@ -21,9 +21,9 @@ from kata.frontier import (
     DEFAULT_PROMOTION_MARGIN_POINTS,
     init_frontier,
     load_frontier_manifest,
+    promote_frontier_artifact,
     render_frontier_json,
     render_frontier_manifest,
-    update_frontier_prompt,
 )
 from kata.generator import generate_prompt
 from kata.reporting import render_report
@@ -134,12 +134,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     frontier = subparsers.add_parser(
         "frontier",
-        help="Manage baseline/frontier prompt state for competition.",
+        help="Manage baseline/frontier agent state for competition.",
     )
     frontier_subparsers = frontier.add_subparsers(dest="frontier_command", required=True)
 
     frontier_init = frontier_subparsers.add_parser(
-        "init", help="Create baseline/frontier prompts and a frontier manifest."
+        "init", help="Create baseline/frontier seed agents and a frontier manifest."
     )
     frontier_init.add_argument("--repo", required=True, help="Path or URL of the target repo.")
     frontier_init.add_argument(
@@ -151,12 +151,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=["contributor", "reviewer"],
         default="contributor",
-        help="Prompt mode to initialize.",
+        help="Competition mode to initialize.",
     )
     frontier_init.add_argument(
         "--registry-url",
         default=None,
-        help="Optional SN74 registry JSON URL for initializing frontier prompts.",
+        help="Optional SN74 registry JSON URL for seeding the frontier agent.",
     )
     frontier_init.add_argument(
         "--primary-task",
@@ -194,7 +194,7 @@ def build_parser() -> argparse.ArgumentParser:
     frontier_show.set_defaults(handler=handle_frontier_show)
 
     frontier_promote = frontier_subparsers.add_parser(
-        "promote", help="Promote a successful challenger prompt into the frontier."
+        "promote", help="Promote a successful challenger agent into the frontier."
     )
     frontier_promote.add_argument(
         "--challenge-run",
@@ -217,12 +217,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=["contributor", "reviewer"],
         default="contributor",
-        help="Prompt mode to challenge.",
+        help="Competition mode to challenge.",
     )
     challenge.add_argument(
-        "--candidate-prompt",
+        "--candidate-agent",
         required=True,
-        help="Path to the challenger prompt file to evaluate against the current frontier.",
+        help="Path to the challenger agent file to evaluate against the current frontier.",
     )
     challenge.add_argument(
         "--agent-command",
@@ -556,11 +556,10 @@ def handle_frontier_promote(args: argparse.Namespace) -> int:
             "Challenge is not promotion-ready. "
             f"Reason: {summary.promotion_reason}"
         )
-    candidate_text = Path(summary.candidate_prompt).read_text(encoding="utf-8")
-    manifest = update_frontier_prompt(
+    manifest = promote_frontier_artifact(
         eval_pack_path=Path(summary.manifest_path).parent.as_posix(),
         mode=summary.mode,
-        new_prompt_text=candidate_text,
+        candidate_artifact_path=summary.candidate_artifact,
         source=summary.run_id,
         evaluator_version=summary.evaluator_version,
     )
@@ -576,7 +575,7 @@ def handle_challenge(args: argparse.Namespace) -> int:
     summary = run_frontier_challenge(
         eval_pack_path=args.eval_pack,
         mode=args.mode,
-        candidate_prompt_path=args.candidate_prompt,
+        candidate_artifact_path=args.candidate_agent,
         agent_command=args.agent_command,
         output_root=args.output_root,
         agent_timeout_seconds=args.agent_timeout_seconds,

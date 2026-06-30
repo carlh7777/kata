@@ -75,8 +75,8 @@ class EvalRunSummary:
 @dataclass(frozen=True)
 class ArtifactVariant:
     name: str
-    filename: str
-    content: str
+    files: dict[str, str]
+    entrypoint: str
 
 
 def run_eval(
@@ -105,13 +105,17 @@ def run_eval(
         artifact_variants = [
             ArtifactVariant(
                 name="baseline",
-                filename="baseline.md",
-                content=generate_baseline_prompt_from_repository(repo, mode),
+                files={"baseline.md": generate_baseline_prompt_from_repository(repo, mode)},
+                entrypoint="baseline.md",
             ),
             ArtifactVariant(
                 name="generated",
-                filename="generated.md",
-                content=generate_prompt_from_repository(repo, mode, resolved_registry_url),
+                files={
+                    "generated.md": generate_prompt_from_repository(
+                        repo, mode, resolved_registry_url
+                    )
+                },
+                entrypoint="generated.md",
             ),
         ]
     return run_artifact_variants(
@@ -183,8 +187,8 @@ def run_artifact_variants(
             variants = [
                 run_variant(
                     variant_name=artifact_variant.name,
-                    artifact_filename=artifact_variant.filename,
-                    artifact_text=artifact_variant.content,
+                    artifact_files=artifact_variant.files,
+                    artifact_entrypoint=artifact_variant.entrypoint,
                     variant_root=task_run_root / artifact_variant.name,
                     repo_snapshot=repo_snapshot,
                     eval_pack_root=task_snapshot,
@@ -230,8 +234,8 @@ def run_artifact_variants(
 def run_variant(
     *,
     variant_name: str,
-    artifact_filename: str,
-    artifact_text: str,
+    artifact_files: dict[str, str],
+    artifact_entrypoint: str,
     variant_root: Path,
     repo_snapshot: Path,
     eval_pack_root: Path,
@@ -244,9 +248,12 @@ def run_variant(
     workspace = variant_root / "workspace"
     shutil.copytree(repo_snapshot, workspace)
 
-    artifact_path = variant_root / artifact_filename
-    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_text(artifact_text.rstrip() + "\n", encoding="utf-8")
+    artifact_root = variant_root / "artifact"
+    artifact_path = stage_artifact_bundle(
+        artifact_root=artifact_root,
+        entrypoint=artifact_entrypoint,
+        files=artifact_files,
+    )
 
     agent_stdout = variant_root / "agent.stdout.txt"
     agent_stderr = variant_root / "agent.stderr.txt"
@@ -290,7 +297,7 @@ def run_variant(
     )
     return VariantResult(
         name=variant_name,
-        artifact_path=str(artifact_path),
+        artifact_path=str(artifact_root),
         workspace=str(workspace),
         agent_stdout=str(agent_stdout),
         agent_stderr=str(agent_stderr),
@@ -461,8 +468,10 @@ def build_env(
     env["KATA_WORKSPACE"] = str(workspace.resolve())
     resolved_artifact = str(artifact_path.resolve())
     env["KATA_ARTIFACT_FILE"] = resolved_artifact
+    env["KATA_ARTIFACT_DIR"] = str(artifact_path.parent.resolve())
     if artifact_path.suffix == ".py":
         env["KATA_AGENT_FILE"] = resolved_artifact
+        env["KATA_AGENT_BUNDLE_DIR"] = str(artifact_path.parent.resolve())
     else:
         env["KATA_PROMPT_FILE"] = resolved_artifact
     env["KATA_MODE"] = mode
@@ -518,13 +527,15 @@ def run_prompt_variants(
         artifact_variants = [
             ArtifactVariant(
                 name=variant_name,
-                filename=f"{variant_name}.md",
-                content=resolve_prompt_text(
-                    variant_name=variant_name,
-                    prompt_value=prompt_value,
-                    repo=repo,
-                    mode=mode,
-                ),
+                files={
+                    f"{variant_name}.md": resolve_prompt_text(
+                        variant_name=variant_name,
+                        prompt_value=prompt_value,
+                        repo=repo,
+                        mode=mode,
+                    )
+                },
+                entrypoint=f"{variant_name}.md",
             )
             for variant_name, prompt_value in prompt_variants
         ]
@@ -571,3 +582,19 @@ def select_task_validations(
     if missing:
         raise ValueError(f"Unknown eval-pack tasks: {', '.join(missing)}")
     return [by_name[task_name] for task_name in task_names]
+
+
+def stage_artifact_bundle(
+    *,
+    artifact_root: Path,
+    entrypoint: str,
+    files: dict[str, str],
+) -> Path:
+    for relative_path, content in files.items():
+        file_path = artifact_root / relative_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content.rstrip() + "\n", encoding="utf-8")
+    entrypoint_path = artifact_root / entrypoint
+    if not entrypoint_path.exists():
+        raise ValueError(f"Artifact bundle is missing entrypoint: {entrypoint}")
+    return entrypoint_path

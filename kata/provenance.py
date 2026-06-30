@@ -20,6 +20,23 @@ def sha256_path(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
+def sha256_directory(root: str | Path, *, include: list[str] | None = None) -> str:
+    root_path = Path(root).expanduser().resolve()
+    relative_paths = include or [
+        path.relative_to(root_path).as_posix()
+        for path in sorted(root_path.rglob("*"))
+        if path.is_file()
+    ]
+    hasher = sha256()
+    for relative_path in sorted(relative_paths):
+        file_path = root_path / relative_path
+        hasher.update(relative_path.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(file_path.read_bytes())
+        hasher.update(b"\0")
+    return hasher.hexdigest()
+
+
 def task_fingerprint(task_root: Path) -> str:
     hasher = sha256()
     for filename in REQUIRED_FILES:

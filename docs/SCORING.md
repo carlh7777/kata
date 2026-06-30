@@ -87,9 +87,9 @@ Kata scoring follows these principles:
 
 Kata evaluates three artifact roles inside one challenge:
 
-- `baseline`: fixed generic control prompt
-- `frontier`: current best verified prompt
-- `candidate`: challenger prompt trying to replace the frontier
+- `baseline`: fixed generic control artifact
+- `frontier`: current best verified artifact
+- `candidate`: challenger artifact trying to replace the frontier
 
 The purpose of the score is:
 

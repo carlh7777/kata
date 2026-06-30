@@ -98,5 +98,5 @@ Current boundary:
 
 Next step:
 
-- convert the seeded frontier/baseline lane artifacts fully from prompt-backed
-  files to agent-backed files so the entire lane is agent-based end to end
+- add validator-owned model/runtime policy and stricter anti-cheat validation
+  on top of the current agent-bundle lane contract

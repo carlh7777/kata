@@ -5,18 +5,28 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from kata.agent_bundle import (
+    AGENT_ENTRY_FILENAME,
+    AGENT_MANIFEST_FILENAME,
+    find_unexpected_bundle_paths,
+    is_allowed_bundle_relative_path,
+    validate_agent_manifest,
+    write_agent_manifest,
+)
 from kata.benchmarks import ensure_active_repo_pack, resolve_eval_pack_path
 from kata.challenge import ChallengeSummary, load_challenge_summary, run_frontier_challenge
-from kata.frontier import FrontierModeConfig, load_frontier_manifest
-from kata.provenance import sha256_text
+from kata.frontier import load_frontier_manifest, resolve_frontier_artifact_hash
+from kata.provenance import sha256_directory
 
 SUBMISSIONS_DIRNAME = "submissions"
 SUBMISSION_SCHEMA_VERSION = 2
 SUBMISSION_METADATA_FILENAME = "submission.json"
-SUBMISSION_AGENT_FILENAME = "agent.py"
-ALLOWED_SUBMISSION_FILENAMES = {
+SUBMISSION_AGENT_FILENAME = AGENT_ENTRY_FILENAME
+SUBMISSION_AGENT_MANIFEST_FILENAME = AGENT_MANIFEST_FILENAME
+TOP_LEVEL_SUBMISSION_FILENAMES = {
     SUBMISSION_METADATA_FILENAME,
     SUBMISSION_AGENT_FILENAME,
+    SUBMISSION_AGENT_MANIFEST_FILENAME,
 }
 SUPPORTED_SUBMISSION_MODES = {"contributor", "reviewer"}
 DEFAULT_AGENT_PLACEHOLDER = (
@@ -49,6 +59,7 @@ class SubmissionDescriptor:
     mode: str
     submission_id: str
     agent_path: Path
+    agent_manifest_path: Path
     metadata_path: Path
 
 
@@ -77,10 +88,10 @@ class SubmissionVerificationResult:
     repo_pack: str
     mode: str
     submission_id: str
-    candidate_prompt_hash: str
-    recorded_candidate_prompt_hash: str
-    current_frontier_prompt_hash: str
-    recorded_frontier_prompt_hash: str
+    candidate_artifact_hash: str
+    recorded_candidate_artifact_hash: str
+    current_frontier_artifact_hash: str
+    recorded_frontier_artifact_hash: str
     submission_matches_challenge: bool
     frontier_is_current: bool
     benchmark_is_current: bool
@@ -148,6 +159,7 @@ def init_submission(
         notes=notes or default_submission_notes(),
     )
     write_submission_metadata(submission_root / SUBMISSION_METADATA_FILENAME, metadata)
+    write_agent_manifest(submission_root / SUBMISSION_AGENT_MANIFEST_FILENAME)
     agent_path = submission_root / SUBMISSION_AGENT_FILENAME
     agent_path.write_text(default_submission_agent(mode), encoding="utf-8")
     return submission_root
@@ -188,6 +200,7 @@ def validate_submission(
 
     metadata_path = descriptor.metadata_path
     agent_path = descriptor.agent_path
+    agent_manifest_path = descriptor.agent_manifest_path
 
     if normalized_changed:
         changed_scope = validate_changed_paths(descriptor, normalized_changed)
@@ -213,6 +226,11 @@ def validate_submission(
         if "def solve(" not in agent_text:
             reasons.append("Submission agent must define solve(...).")
 
+    if not agent_manifest_path.exists():
+        reasons.append(f"Missing required submission file: {agent_manifest_path.name}")
+    else:
+        reasons.extend(validate_agent_manifest(agent_manifest_path))
+
     if metadata is not None:
         reasons.extend(validate_submission_metadata(metadata, descriptor))
         reasons.extend(validate_submission_target(metadata))
@@ -220,7 +238,7 @@ def validate_submission(
             reasons.extend(
                 validate_submission_candidate(
                     metadata=metadata,
-                    agent_path=agent_path,
+                    submission_root=descriptor.root,
                 )
             )
 
@@ -260,7 +278,7 @@ def evaluate_submission(
     return run_frontier_challenge(
         eval_pack_path=validation.metadata.repo_pack,
         mode=validation.metadata.mode,
-        candidate_prompt_path=validation.agent_path,
+        candidate_artifact_path=validation.submission_path,
         agent_command=agent_command,
         output_root=output_root,
         agent_timeout_seconds=agent_timeout_seconds,
@@ -383,19 +401,18 @@ def verify_submission_result(
             f"Mode is not configured in frontier manifest: {validation.metadata.mode}"
         )
 
-    agent_text = Path(validation.agent_path).read_text(encoding="utf-8").rstrip() + "\n"
-    candidate_hash = sha256_text(agent_text)
-    current_frontier_hash = resolve_frontier_prompt_hash(mode_config)
+    candidate_hash = hash_submission_bundle(Path(validation.submission_path))
+    current_frontier_hash = resolve_frontier_artifact_hash(mode_config)
 
     expected_manifest_path = (
         resolve_eval_pack_path(validation.metadata.repo_pack) / "frontier.json"
     ).resolve()
     submission_matches = (
         summary.mode == validation.metadata.mode
-        and summary.candidate_prompt_hash == candidate_hash
+        and summary.candidate_artifact_hash == candidate_hash
         and Path(summary.manifest_path).resolve() == expected_manifest_path
     )
-    frontier_is_current = summary.frontier_prompt_hash == current_frontier_hash
+    frontier_is_current = summary.frontier_artifact_hash == current_frontier_hash
     benchmark_is_current = (
         summary.evaluator_version == (mode_config.evaluator_version or summary.evaluator_version)
         and summary.primary_pool_fingerprint == mode_config.primary_pool_fingerprint
@@ -406,7 +423,7 @@ def verify_submission_result(
     if not submission_matches:
         reasons.append("Challenge result does not match the current submission payload.")
     if not frontier_is_current:
-        reasons.append("Challenge result is stale because the frontier prompt has changed.")
+        reasons.append("Challenge result is stale because the frontier artifact has changed.")
     if not benchmark_is_current:
         reasons.append("Challenge result is stale because the benchmark lane has changed.")
     if not summary.promotion_ready:
@@ -418,10 +435,10 @@ def verify_submission_result(
         repo_pack=validation.metadata.repo_pack,
         mode=validation.metadata.mode,
         submission_id=validation.metadata.submission_id,
-        candidate_prompt_hash=candidate_hash,
-        recorded_candidate_prompt_hash=summary.candidate_prompt_hash,
-        current_frontier_prompt_hash=current_frontier_hash,
-        recorded_frontier_prompt_hash=summary.frontier_prompt_hash,
+        candidate_artifact_hash=candidate_hash,
+        recorded_candidate_artifact_hash=summary.candidate_artifact_hash,
+        current_frontier_artifact_hash=current_frontier_hash,
+        recorded_frontier_artifact_hash=summary.frontier_artifact_hash,
         submission_matches_challenge=submission_matches,
         frontier_is_current=frontier_is_current,
         benchmark_is_current=benchmark_is_current,
@@ -624,6 +641,7 @@ def validate_changed_paths(
     ).as_posix() + "/"
     off_scope_paths: list[str] = []
     reasons: list[str] = []
+    touched_bundle_file = False
 
     for changed_path in changed_paths:
         normalized = changed_path.strip("/")
@@ -631,14 +649,20 @@ def validate_changed_paths(
             off_scope_paths.append(normalized)
             continue
         relative_name = normalized.removeprefix(expected_prefix)
-        if "/" in relative_name or relative_name not in ALLOWED_SUBMISSION_FILENAMES:
+        if (
+            "/" not in relative_name
+            and relative_name in TOP_LEVEL_SUBMISSION_FILENAMES
+        ) or is_allowed_bundle_relative_path(relative_name):
+            if is_allowed_bundle_relative_path(relative_name):
+                touched_bundle_file = True
+            continue
+        else:
             off_scope_paths.append(normalized)
 
     if off_scope_paths:
         reasons.append("Submission PR touches paths outside the allowed submission scope.")
-    expected_agent = expected_prefix + SUBMISSION_AGENT_FILENAME
-    if expected_agent not in changed_paths:
-        reasons.append("Submission PR must modify agent.py.")
+    if not touched_bundle_file:
+        reasons.append("Submission PR must modify at least one agent bundle file.")
 
     return ChangedPathValidation(
         off_scope_paths=off_scope_paths,
@@ -676,11 +700,15 @@ def validate_submission_target(metadata: SubmissionMetadata) -> list[str]:
 def validate_submission_candidate(
     *,
     metadata: SubmissionMetadata,
-    agent_path: Path,
+    submission_root: Path,
 ) -> list[str]:
     del metadata
-    del agent_path
-    return []
+    unexpected_paths = find_unexpected_bundle_paths(submission_root)
+    if not unexpected_paths:
+        return []
+    return [
+        "Submission bundle contains unsupported files: " + ", ".join(unexpected_paths)
+    ]
 
 
 def validate_submission_lane(repo_pack: str, mode: str) -> list[str]:
@@ -759,6 +787,7 @@ def resolve_submission_descriptor(
             mode=mode,
             submission_id=submission_id,
             agent_path=root / SUBMISSION_AGENT_FILENAME,
+            agent_manifest_path=root / SUBMISSION_AGENT_MANIFEST_FILENAME,
             metadata_path=root / SUBMISSION_METADATA_FILENAME,
         ),
         reasons,
@@ -793,13 +822,6 @@ def validate_submission_mode(mode: str) -> None:
         )
 
 
-def resolve_frontier_prompt_hash(mode_config: FrontierModeConfig) -> str:
-    if mode_config.frontier_prompt_hash:
-        return mode_config.frontier_prompt_hash
-    frontier_text = Path(mode_config.frontier_prompt).read_text(encoding="utf-8")
-    return sha256_text(frontier_text)
-
-
 def default_submissions_root() -> Path:
     return Path.cwd().resolve() / SUBMISSIONS_DIRNAME
 
@@ -824,6 +846,7 @@ def default_submission_notes() -> str:
         f"- author: your GitHub username\n"
         f"- submission_id: {SUBMISSION_ID_CONVENTION}\n"
         "- implement a real agent in agent.py before opening the PR\n"
+        "- optional helper modules may live under helpers/*.py\n"
     )
 
 
@@ -867,3 +890,20 @@ def dedupe(values: list[str]) -> list[str]:
         unique.append(value)
         seen.add(value)
     return unique
+
+
+def hash_submission_bundle(root: Path) -> str:
+    bundle_root = root.expanduser().resolve()
+    relative_paths = sorted(
+        path for path in find_bundle_relative_paths(bundle_root)
+    )
+    return sha256_directory(bundle_root, include=relative_paths)
+
+
+def find_bundle_relative_paths(root: Path) -> list[str]:
+    relative_paths = [
+        path.relative_to(root).as_posix()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and is_allowed_bundle_relative_path(path.relative_to(root).as_posix())
+    ]
+    return relative_paths

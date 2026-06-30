@@ -66,7 +66,12 @@ Challenger PRs should submit files only under:
 Required files:
 
 - `agent.py`
+- `agent_manifest.json`
 - `submission.json`
+
+Optional files:
+
+- `helpers/*.py`
 
 Recommended metadata convention:
 

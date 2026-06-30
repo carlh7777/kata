@@ -26,7 +26,7 @@ live in the benchmark registry repo identified by
 
 ## Why it matters
 
-A prompt improvement is only trustworthy when the measurement basis is stable.
+An artifact improvement is only trustworthy when the measurement basis is stable.
 
 If any of these change, the result may no longer be comparable:
 
@@ -34,7 +34,7 @@ If any of these change, the result may no longer be comparable:
 - `checks.sh`
 - allowed or forbidden path rules
 - evaluator scoring rules
-- frontier prompt state
+- frontier artifact state
 
 This is why Kata treats benchmark provenance as part of the result, not just
 background context.
