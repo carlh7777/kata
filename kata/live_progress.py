@@ -28,20 +28,6 @@ def update_live_status(update: dict[str, Any]) -> None:
     write_status(path, merged)
 
 
-def update_pool_status(pool_name: str, update: dict[str, Any]) -> None:
-    current_update: dict[str, Any] = {
-        "state": "running",
-        "phase": pool_name,
-        "pools": {
-            pool_name: {
-                "name": pool_name,
-                **update,
-            }
-        },
-    }
-    update_live_status(current_update)
-
-
 def read_status(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -66,13 +52,7 @@ def write_status(path: Path, payload: dict[str, Any]) -> None:
 def merge_status(current: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
     merged = dict(current)
     for key, value in update.items():
-        if (
-            key == "pools"
-            and isinstance(value, dict)
-            and isinstance(merged.get("pools"), dict)
-        ):
-            merged["pools"] = merge_pools(dict(merged["pools"]), value)
-        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
             nested = dict(merged[key])
             nested.update(value)
             merged[key] = nested
@@ -80,16 +60,6 @@ def merge_status(current: dict[str, Any], update: dict[str, Any]) -> dict[str, A
             merged[key] = value
     return merged
 
-
-def merge_pools(current: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
-    for pool_name, pool_payload in update.items():
-        if isinstance(pool_payload, dict) and isinstance(current.get(pool_name), dict):
-            existing = dict(current[pool_name])
-            existing.update(pool_payload)
-            current[pool_name] = existing
-        else:
-            current[pool_name] = pool_payload
-    return current
 
 
 def timestamp_now() -> str:
