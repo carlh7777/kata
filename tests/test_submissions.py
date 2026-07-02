@@ -36,6 +36,16 @@ VALID_AGENT = (
     "def solve(repo_path, issue, model, api_base, api_key):\n"
     "    return {\"success\": True, \"diff\": \"\"}\n"
 )
+VALID_MINER_AGENT = (
+    "def agent_main(project_dir=None, inference_api=None):\n"
+    "    return {\"vulnerabilities\": []}\n"
+)
+SEED_MINER_AGENT = (
+    "def agent_main(project_dir=None, inference_api=None):\n"
+    "    return {\n"
+    "        \"vulnerabilities\": [{\"title\": \"seed finding\"}],\n"
+    "    }\n"
+)
 SEED_AGENT = (
     "def solve(repo_path, issue, model, api_base, api_key):\n"
     "    return {\"diff\": \"\"}\n"
@@ -65,46 +75,52 @@ def write_registry(
     (root / "benchmarks").mkdir(parents=True, exist_ok=True)
 
 
-def write_frontier_pack(registry_root: Path, repo_pack: str, repo_ref: str) -> Path:
+def write_frontier_pack(
+    registry_root: Path,
+    repo_pack: str,
+    repo_ref: str,
+    *,
+    modes: tuple[str, ...] = ("contributor",),
+) -> Path:
     pack_root = registry_root / "benchmarks" / repo_pack
     write_eval_task(pack_root / "task-a")
-    artifact_root = pack_root / "agents" / "contributor"
-    baseline_root = artifact_root / "baseline"
-    frontier_root = artifact_root / "frontier"
-    baseline_root.mkdir(parents=True, exist_ok=True)
-    frontier_root.mkdir(parents=True, exist_ok=True)
-    baseline_text = SEED_AGENT
-    frontier_text = SEED_AGENT
-    write_agent_manifest(baseline_root / AGENT_MANIFEST_FILENAME)
-    write_agent_manifest(frontier_root / AGENT_MANIFEST_FILENAME)
-    (baseline_root / AGENT_ENTRY_FILENAME).write_text(baseline_text, encoding="utf-8")
-    (frontier_root / AGENT_ENTRY_FILENAME).write_text(frontier_text, encoding="utf-8")
+    frontier_modes: dict[str, FrontierModeConfig] = {}
+    for mode in modes:
+        artifact_root = pack_root / "agents" / mode
+        baseline_root = artifact_root / "baseline"
+        frontier_root = artifact_root / "frontier"
+        baseline_root.mkdir(parents=True, exist_ok=True)
+        frontier_root.mkdir(parents=True, exist_ok=True)
+        seed_text = SEED_MINER_AGENT if mode == "miner" else SEED_AGENT
+        write_agent_manifest(baseline_root / AGENT_MANIFEST_FILENAME)
+        write_agent_manifest(frontier_root / AGENT_MANIFEST_FILENAME)
+        (baseline_root / AGENT_ENTRY_FILENAME).write_text(seed_text, encoding="utf-8")
+        (frontier_root / AGENT_ENTRY_FILENAME).write_text(seed_text, encoding="utf-8")
+        frontier_modes[mode] = FrontierModeConfig(
+            baseline_artifact=str(baseline_root.resolve()),
+            frontier_artifact=str(frontier_root.resolve()),
+            primary_tasks=["task-a"],
+            holdout_tasks=[],
+            evaluator_version="2026-06-29.v1",
+            baseline_artifact_hash=sha256_directory(
+                baseline_root,
+                include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+            ),
+            frontier_artifact_hash=sha256_directory(
+                frontier_root,
+                include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
+            ),
+            primary_pool_fingerprint=pool_fingerprint([pack_root / "task-a"]),
+            holdout_pool_fingerprint=None,
+            frontier_updated_at="2026-06-29T00:00:00+00:00",
+            frontier_source="seed",
+        )
     manifest = FrontierManifest(
         schema_version=FRONTIER_SCHEMA_VERSION,
         repo_ref=repo_ref,
         eval_pack=str(pack_root),
         updated_at="2026-06-29T00:00:00+00:00",
-        modes={
-            "contributor": FrontierModeConfig(
-                baseline_artifact=str(baseline_root.resolve()),
-                frontier_artifact=str(frontier_root.resolve()),
-                primary_tasks=["task-a"],
-                holdout_tasks=[],
-                evaluator_version="2026-06-29.v1",
-                baseline_artifact_hash=sha256_directory(
-                    baseline_root,
-                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
-                ),
-                frontier_artifact_hash=sha256_directory(
-                    frontier_root,
-                    include=[AGENT_ENTRY_FILENAME, AGENT_MANIFEST_FILENAME],
-                ),
-                primary_pool_fingerprint=pool_fingerprint([pack_root / "task-a"]),
-                holdout_pool_fingerprint=None,
-                frontier_updated_at="2026-06-29T00:00:00+00:00",
-                frontier_source="seed",
-            )
-        },
+        modes=frontier_modes,
     )
     write_frontier_manifest(str(pack_root), manifest)
     return pack_root
@@ -309,6 +325,191 @@ def test_validate_submission_rejects_missing_solve(
 
     assert not result.is_valid
     assert "Submission agent must define solve(...)." in result.reasons
+
+
+def test_validate_submission_accepts_miner_submission(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(
+        registry_root,
+        "example__repo",
+        "/tmp/repo",
+        modes=("contributor", "miner"),
+    )
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="miner",
+        submission_id="miner-sn60-1",
+        output_root=str(repo_root / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(VALID_MINER_AGENT, encoding="utf-8")
+
+    result = validate_submission(
+        str(submission_root),
+        changed_paths=[
+            "submissions/example__repo/miner/miner-sn60-1/agent.py",
+            "submissions/example__repo/miner/miner-sn60-1/submission.json",
+        ],
+        repo_root=str(repo_root),
+    )
+
+    assert result.is_valid
+    assert result.reasons == []
+
+
+def test_validate_submission_rejects_missing_agent_main_for_miner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(
+        registry_root,
+        "example__repo",
+        "/tmp/repo",
+        modes=("contributor", "miner"),
+    )
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="miner",
+        submission_id="miner-no-agent-main",
+        output_root=str(tmp_path / "Kata" / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(VALID_AGENT, encoding="utf-8")
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert "Submission agent must define agent_main(...)." in result.reasons
+
+
+def test_validate_submission_rejects_commented_agent_main_for_miner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(
+        registry_root,
+        "example__repo",
+        "/tmp/repo",
+        modes=("contributor", "miner"),
+    )
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="miner",
+        submission_id="miner-commented-agent-main",
+        output_root=str(tmp_path / "Kata" / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(
+        "# def agent_main(project_dir=None, inference_api=None):\n"
+        "print('not a real entrypoint')\n",
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert "Submission agent must define agent_main(...)." in result.reasons
+
+
+def test_validate_submission_rejects_required_agent_main_args(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(
+        registry_root,
+        "example__repo",
+        "/tmp/repo",
+        modes=("contributor", "miner"),
+    )
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="miner",
+        submission_id="miner-required-arg",
+        output_root=str(tmp_path / "Kata" / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(
+        "def agent_main(project_dir):\n"
+        "    return {\"vulnerabilities\": []}\n",
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert "Submission agent must support no-argument invocation: agent_main()." in result.reasons
+
+
+def test_validate_submission_rejects_helper_files_for_miner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(
+        registry_root,
+        "example__repo",
+        "/tmp/repo",
+        modes=("contributor", "miner"),
+    )
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="miner",
+        submission_id="miner-helpers",
+        output_root=str(tmp_path / "Kata" / "submissions"),
+    )
+    helpers_root = submission_root / "helpers"
+    helpers_root.mkdir()
+    (helpers_root / "planner.py").write_text("def plan():\n    return 'ok'\n", encoding="utf-8")
+    (submission_root / "agent.py").write_text(VALID_MINER_AGENT, encoding="utf-8")
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert any("do not support helper files in V1" in reason for reason in result.reasons)
+
+
+def test_validate_submission_rejects_non_bitsec_report_contract_for_miner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    registry_root = tmp_path / "registry"
+    write_registry(registry_root)
+    write_frontier_pack(
+        registry_root,
+        "example__repo",
+        "/tmp/repo",
+        modes=("contributor", "miner"),
+    )
+    monkeypatch.setenv("KATA_BENCHMARKS_ROOT", str(registry_root))
+    submission_root = init_submission(
+        repo_pack="example__repo",
+        mode="miner",
+        submission_id="miner-bad-report",
+        output_root=str(tmp_path / "Kata" / "submissions"),
+    )
+    (submission_root / "agent.py").write_text(
+        "def agent_main(project_dir=None, inference_api=None):\n"
+        "    return {\"success\": True}\n",
+        encoding="utf-8",
+    )
+
+    result = validate_submission(str(submission_root))
+
+    assert not result.is_valid
+    assert any("Bitsec-compatible report" in reason for reason in result.reasons)
 
 
 def test_init_submission_creates_agent_manifest(

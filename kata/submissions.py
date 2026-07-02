@@ -46,7 +46,7 @@ TOP_LEVEL_SUBMISSION_FILENAMES = {
     SUBMISSION_AGENT_FILENAME,
     SUBMISSION_AGENT_MANIFEST_FILENAME,
 }
-SUPPORTED_SUBMISSION_MODES = {"contributor", "reviewer"}
+SUPPORTED_SUBMISSION_MODES = {"contributor", "miner", "reviewer"}
 DEFAULT_AGENT_PLACEHOLDER = (
     "Replace this scaffold with a real challenger agent implementation before opening a PR."
 )
@@ -217,7 +217,7 @@ def init_submission(
         created_at=datetime.now(UTC).isoformat(),
         author=effective_author,
         title=title,
-        notes=notes or default_submission_notes(),
+        notes=notes or default_submission_notes(mode),
     )
     write_submission_metadata(submission_root / SUBMISSION_METADATA_FILENAME, metadata)
     write_agent_manifest(submission_root / SUBMISSION_AGENT_MANIFEST_FILENAME)
@@ -302,8 +302,8 @@ def validate_submission(
             reasons.append("Submission agent file is empty.")
         elif DEFAULT_AGENT_PLACEHOLDER in agent_text:
             reasons.append("Submission agent still contains scaffold placeholder text.")
-        if "def solve(" not in agent_text:
-            reasons.append("Submission agent must define solve(...).")
+        if not agent_defines_required_entrypoint(agent_text, descriptor.mode):
+            reasons.append(required_submission_entrypoint_reason(descriptor.mode))
 
     if not agent_manifest_path.exists():
         reasons.append(f"Missing required submission file: {agent_manifest_path.name}")
@@ -877,8 +877,20 @@ def validate_submission_candidate(
         )
 
     bundle_files = load_bundle_files(submission_root)
-    reasons.extend(validate_bundle_python_sources(bundle_files))
-    reasons.extend(validate_bundle_static_policy(bundle_files))
+    if metadata.mode == "miner":
+        helper_paths = [
+            relative_path
+            for relative_path in bundle_paths
+            if Path(relative_path).parts[0] == "helpers"
+        ]
+        if helper_paths:
+            reasons.append(
+                "SN60 miner submissions do not support helper files in V1: "
+                + ", ".join(helper_paths)
+            )
+
+    reasons.extend(validate_bundle_python_sources(bundle_files, mode=metadata.mode))
+    reasons.extend(validate_bundle_static_policy(bundle_files, mode=metadata.mode))
     reasons.extend(
         validate_submission_not_copycat(
             metadata=metadata,
@@ -1010,6 +1022,19 @@ def default_submissions_root() -> Path:
 
 
 def default_submission_agent(mode: str) -> str:
+    if mode == "miner":
+        return (
+            "from __future__ import annotations\n\n"
+            f'\"\"\"Kata submission scaffold for the {mode} lane.\"\"\"\n\n'
+            "def agent_main(\n"
+            "    project_dir: str | None = None,\n"
+            "    inference_api: str | None = None,\n"
+            ") -> dict:\n"
+            f"    # {DEFAULT_AGENT_PLACEHOLDER}\n"
+            "    return {\n"
+            "        \"vulnerabilities\": [],\n"
+            "    }\n"
+        )
     return (
         "from __future__ import annotations\n\n"
         f'\"\"\"Kata submission scaffold for the {mode} lane.\"\"\"\n\n'
@@ -1023,14 +1048,37 @@ def default_submission_agent(mode: str) -> str:
     )
 
 
-def default_submission_notes() -> str:
-    return (
-        "Recommended conventions:\n"
-        f"- author: your GitHub username\n"
-        f"- submission_id: {SUBMISSION_ID_CONVENTION}\n"
-        "- implement a real agent in agent.py before opening the PR\n"
-        "- optional helper modules may live under helpers/*.py\n"
+def default_submission_notes(mode: str) -> str:
+    lines = [
+        "Recommended conventions:",
+        "- author: your GitHub username",
+        f"- submission_id: {SUBMISSION_ID_CONVENTION}",
+        "- implement a real agent in agent.py before opening the PR",
+    ]
+    if mode == "miner":
+        lines.append("- SN60 miner submissions in V1 must stay self-contained in agent.py")
+    else:
+        lines.append("- optional helper modules may live under helpers/*.py")
+    return "\n".join(lines) + "\n"
+
+
+def submission_entrypoint_name(mode: str) -> str:
+    if mode == "miner":
+        return "agent_main"
+    return "solve"
+
+
+def required_submission_entrypoint_reason(mode: str) -> str:
+    if mode == "miner":
+        return "Submission agent must define agent_main(...)."
+    return "Submission agent must define solve(...)."
+
+
+def agent_defines_required_entrypoint(agent_source: str, mode: str) -> bool:
+    pattern = re.compile(
+        rf"(?m)^def\s+{re.escape(submission_entrypoint_name(mode))}\s*\("
     )
+    return pattern.search(agent_source) is not None
 
 
 def infer_submission_dirs(changed_paths: list[str]) -> list[str]:
@@ -1102,7 +1150,11 @@ def find_bundle_symlink_paths(root: Path) -> list[str]:
     ]
 
 
-def validate_bundle_python_sources(bundle_files: dict[str, str]) -> list[str]:
+def validate_bundle_python_sources(
+    bundle_files: dict[str, str],
+    *,
+    mode: str,
+) -> list[str]:
     reasons: list[str] = []
     for relative_path, content in sorted(bundle_files.items()):
         try:
@@ -1134,12 +1186,16 @@ def validate_bundle_python_sources(bundle_files: dict[str, str]) -> list[str]:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
     agent_source = bundle_files.get(AGENT_ENTRY_FILENAME, "")
-    if agent_source and "def solve(" not in agent_source:
-        reasons.append("Submission agent must define solve(...).")
+    if agent_source and not agent_defines_required_entrypoint(agent_source, mode):
+        reasons.append(required_submission_entrypoint_reason(mode))
     return reasons
 
 
-def validate_bundle_static_policy(bundle_files: dict[str, str]) -> list[str]:
+def validate_bundle_static_policy(
+    bundle_files: dict[str, str],
+    *,
+    mode: str,
+) -> list[str]:
     reasons: list[str] = []
     parsed_trees: dict[str, ast.AST] = {}
     for relative_path, content in sorted(bundle_files.items()):
@@ -1164,25 +1220,28 @@ def validate_bundle_static_policy(bundle_files: dict[str, str]) -> list[str]:
             reasons.append(
                 f"Submission bundle appears to contain a hardcoded secret token: {relative_path}."
             )
-    reasons.extend(validate_bundle_solver_contract(parsed_trees))
-    reasons.extend(validate_bundle_sampling_policy(parsed_trees))
+    reasons.extend(validate_bundle_entrypoint_contract(parsed_trees, mode=mode))
+    reasons.extend(validate_bundle_sampling_policy(parsed_trees, mode=mode))
     return reasons
+
+
+def validate_bundle_entrypoint_contract(
+    parsed_trees: dict[str, ast.AST],
+    *,
+    mode: str,
+) -> list[str]:
+    if mode == "miner":
+        return validate_bundle_miner_contract(parsed_trees)
+    return validate_bundle_solver_contract(parsed_trees)
 
 
 def validate_bundle_solver_contract(parsed_trees: dict[str, ast.AST]) -> list[str]:
     agent_tree = parsed_trees.get(AGENT_ENTRY_FILENAME)
     if agent_tree is None:
         return []
-    solve_fn = next(
-        (
-            node
-            for node in ast.walk(agent_tree)
-            if isinstance(node, ast.FunctionDef) and node.name == "solve"
-        ),
-        None,
-    )
+    solve_fn = find_module_function_def(agent_tree, "solve")
     if solve_fn is None:
-        return []
+        return [required_submission_entrypoint_reason("contributor")]
     if len(solve_fn.args.args) != len(REQUIRED_SOLVE_ARGS):
         return [
             "Submission agent must keep the validator solve signature: "
@@ -1201,7 +1260,43 @@ def validate_bundle_solver_contract(parsed_trees: dict[str, ast.AST]) -> list[st
     return []
 
 
-def validate_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[str]:
+def validate_bundle_miner_contract(parsed_trees: dict[str, ast.AST]) -> list[str]:
+    agent_tree = parsed_trees.get(AGENT_ENTRY_FILENAME)
+    if agent_tree is None:
+        return []
+    agent_main_fn = find_module_function_def(agent_tree, "agent_main")
+    if agent_main_fn is None:
+        return [required_submission_entrypoint_reason("miner")]
+
+    positional_args = [*agent_main_fn.args.posonlyargs, *agent_main_fn.args.args]
+    required_positional_args = len(positional_args) - len(agent_main_fn.args.defaults)
+    if required_positional_args > 0:
+        return ["Submission agent must support no-argument invocation: agent_main()."]
+
+    required_keyword_only_args = [
+        arg.arg
+        for arg, default in zip(agent_main_fn.args.kwonlyargs, agent_main_fn.args.kw_defaults)
+        if default is None
+    ]
+    if required_keyword_only_args:
+        return ["Submission agent must support no-argument invocation: agent_main()."]
+
+    for return_node in iter_non_nested_function_returns(agent_main_fn):
+        if return_node.value is None or not isinstance(return_node.value, ast.Dict):
+            continue
+        if not dict_contains_string_key(return_node.value, "vulnerabilities"):
+            return [
+                "Submission agent must return a Bitsec-compatible report with "
+                "top-level `vulnerabilities`."
+            ]
+    return []
+
+
+def validate_bundle_sampling_policy(
+    parsed_trees: dict[str, ast.AST],
+    *,
+    mode: str,
+) -> list[str]:
     reasons: list[str] = []
     for relative_path, tree in sorted(parsed_trees.items()):
         for node in ast.walk(tree):
@@ -1223,7 +1318,7 @@ def validate_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[st
             ),
             None,
         )
-        if solve_fn is None:
+        if mode == "miner" or solve_fn is None:
             continue
         for node in ast.walk(solve_fn):
             if isinstance(node, ast.Assign):
@@ -1241,6 +1336,37 @@ def validate_bundle_sampling_policy(parsed_trees: dict[str, ast.AST]) -> list[st
                         f"parameters inside solve(...): `{node.target.id}`."
                     )
     return dedupe(reasons)
+
+
+def iter_non_nested_function_returns(function_node: ast.FunctionDef):
+    stack: list[ast.AST] = list(reversed(function_node.body))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Return):
+            yield node
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+
+
+def dict_contains_string_key(node: ast.Dict, key_name: str) -> bool:
+    for key in node.keys:
+        if isinstance(key, ast.Constant) and key.value == key_name:
+            return True
+    return False
+
+
+def find_module_function_def(
+    module_tree: ast.AST,
+    function_name: str,
+) -> ast.FunctionDef | None:
+    if not isinstance(module_tree, ast.Module):
+        return None
+    for node in module_tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            return node
+    return None
 
 
 def validate_submission_not_copycat(
