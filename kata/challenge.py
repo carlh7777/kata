@@ -40,7 +40,6 @@ from kata.screening import (
     write_screening_result,
 )
 
-SUBMISSION_METADATA_FILENAME = "submission.json"
 SN60_MINER_LANE_ID = "sn60__bitsec"
 SN60_MINER_MODE = "miner"
 SN60_VALIDATOR_MODEL = "sn60-bitsec-sandbox"
@@ -736,16 +735,3 @@ def render_pool(pool: ChallengePoolSummary) -> list[str]:
 
 def write_challenge_summary(path: Path, summary: ChallengeSummary) -> None:
     path.write_text(json.dumps(asdict(summary), indent=2) + "\n", encoding="utf-8")
-
-
-def infer_submission_author(submission_id: str) -> str | None:
-    if submission_id.startswith("kata-init"):
-        return "Kata Seed"
-    parts = submission_id.rsplit("-", 2)
-    if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
-        return parts[0]
-    return submission_id or None
-
-
-
-
