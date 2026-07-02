@@ -33,7 +33,10 @@ from kata.challenge import (
     run_sn60_challenge,
 )
 from kata.config import resolve_validator_model
-from kata.evaluators.sn60_bitsec import DEFAULT_REPLICAS_PER_PROJECT
+from kata.evaluators.sn60_bitsec import (
+    DEFAULT_REPLICAS_PER_PROJECT,
+    SN60_BITSEC_EVALUATOR_ID,
+)
 from kata.frontier import (
     load_frontier_manifest,
     promote_frontier_artifact,
@@ -46,7 +49,11 @@ from kata.lane_state import (
     load_pack_registry,
 )
 from kata.provenance import sha256_directory
-from kata.public_artifacts import publish_public_king, resolve_artifact_path
+from kata.public_artifacts import (
+    publish_public_king,
+    resolve_artifact_path,
+    resolve_public_king_root,
+)
 from kata.screening import validate_sn60_static_screening
 
 SUBMISSIONS_DIRNAME = "submissions"
@@ -379,18 +386,13 @@ def evaluate_submission(
                 "SN60 miner evaluation requires at least one project key. "
                 "Pass --sn60-project-key or set KATA_SN60_PROJECT_KEYS."
             )
-        manifest = load_frontier_manifest(validation.metadata.repo_pack)
-        mode_config = manifest.modes.get(validation.metadata.mode)
-        if mode_config is None:
-            raise ValueError(
-                f"Mode is not configured in frontier manifest: {validation.metadata.mode}"
-            )
+        lane_id, frontier_artifact_path = resolve_sn60_king_artifact(validation.metadata)
         return run_sn60_challenge(
-            frontier_artifact_path=str(resolve_artifact_path(mode_config.frontier_artifact)),
+            frontier_artifact_path=frontier_artifact_path,
             candidate_artifact_path=validation.submission_path,
             project_keys=project_keys,
             candidate_submission_id=validation.metadata.submission_id,
-            lane_id=validation.metadata.repo_pack,
+            lane_id=lane_id,
             output_root=output_root,
             replicas_per_project=sn60_replicas_per_project or DEFAULT_REPLICAS_PER_PROJECT,
             sandbox_root=sn60_sandbox_root,
@@ -415,7 +417,39 @@ def parse_sn60_project_keys_from_env() -> list[str]:
 
 
 def is_sn60_miner_metadata(metadata: SubmissionMetadata) -> bool:
+    # Evaluator adapters are selected by the pack registry's evaluator id;
+    # the SN60 lane id is only a fallback for pre-registry lanes.
+    entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
+    if entry is not None:
+        return entry.evaluator_id == SN60_BITSEC_EVALUATOR_ID
     return metadata.repo_pack == SN60_MINER_LANE_ID and metadata.mode == SN60_MINER_MODE
+
+
+def resolve_sn60_king_artifact(metadata: SubmissionMetadata) -> tuple[str, str]:
+    """Resolve (lane_id, king_artifact_path) for an SN60 duel.
+
+    Registry-backed lanes use the published king under kings/<repo-pack>/<mode>/;
+    pre-registry lanes fall back to the legacy frontier manifest.
+    """
+    entry = find_evaluator_pack_entry(metadata.repo_pack, metadata.mode)
+    if entry is not None:
+        king_root = resolve_public_king_root(
+            public_root=None,
+            repo_pack=metadata.repo_pack,
+            mode=metadata.mode,
+        )
+        if not (king_root / SUBMISSION_AGENT_FILENAME).exists():
+            raise ValueError(
+                f"SN60 lane king artifact is not seeded: {king_root}. "
+                "Seed the current king under kings/<repo-pack>/<mode>/ before running duels."
+            )
+        return entry.lane_id, str(king_root)
+
+    manifest = load_frontier_manifest(metadata.repo_pack)
+    mode_config = manifest.modes.get(metadata.mode)
+    if mode_config is None:
+        raise ValueError(f"Mode is not configured in frontier manifest: {metadata.mode}")
+    return metadata.repo_pack, str(resolve_artifact_path(mode_config.frontier_artifact))
 
 
 def inspect_pull_request(

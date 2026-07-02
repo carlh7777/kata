@@ -14,6 +14,7 @@ from typing import Callable
 from kata.agent_bundle import AGENT_ENTRY_FILENAME, load_bundle_files, write_bundle_files
 from kata.provenance import sha256_directory
 
+SN60_BITSEC_EVALUATOR_ID = "sn60_bitsec"
 DEFAULT_SN60_DUEL_SCHEMA_VERSION = 1
 DEFAULT_SANDBOX_PROXY_NETWORK = "bitsec-net"
 DEFAULT_SANDBOX_PROXY_URL = "http://localhost:8087"
@@ -550,8 +551,12 @@ def build_bitsec_execution_command(
         f"INFERENCE_API={inference_api}",
         "--env",
         "INFERENCE_API_KEY",
-        f"ghcr.io/bitsec-ai/{context.project_key}:latest",
+        bitsec_project_image(context.project_key),
     ]
+
+
+def bitsec_project_image(project_key: str) -> str:
+    return f"ghcr.io/bitsec-ai/{project_key}:latest"
 
 
 def build_bitsec_evaluation_command(context: Sn60ReplicaContext) -> list[str]:

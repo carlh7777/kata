@@ -15,7 +15,11 @@ from kata.evaluators.sn60_bitsec import (
     Sn60ReplicaResult,
     Sn60VariantSummary,
 )
-from kata.lane_state import load_challenge_state, load_promotion_record
+from kata.lane_state import (
+    load_benchmark_snapshot,
+    load_challenge_state,
+    load_promotion_record,
+)
 
 
 def write_bundle(root: Path, title: str) -> None:
@@ -137,6 +141,18 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
     assert promotion_record.final_metrics["candidate_average_score"] == 1.0
     assert promotion_record.pass_counts == {"frontier": 0, "candidate": 1}
     assert promotion_record.local_replica_scores["candidate"] == [1.0, 1.0]
+
+    snapshot = load_benchmark_snapshot(
+        SN60_MINER_LANE_ID,
+        public_root=str(tmp_path / "public"),
+    )
+    assert snapshot.sandbox_commit_hash == "sandbox-commit-1"
+    assert snapshot.project_keys == ["project-alpha"]
+    assert snapshot.benchmark_dataset_id == "curated-highs-only-2025-08-08.json"
+    assert snapshot.benchmark_dataset_hash
+    assert snapshot.project_list_hash
+    assert snapshot.container_images == ["ghcr.io/bitsec-ai/project-alpha:latest"]
+    assert snapshot.scorer_version == "ScaBenchScorerV2"
     assert (
         Path(summary.manifest_path).with_name("screening_result.json")
     ).exists()

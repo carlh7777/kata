@@ -18,6 +18,7 @@ from kata.evaluators.sn60_bitsec import (
     Sn60EvaluationHook,
     Sn60ExecutionHook,
     Sn60VariantSummary,
+    bitsec_project_image,
     hash_bundle_root,
     resolve_sn60_sandbox_source,
     run_sn60_bitsec_duel,
@@ -31,10 +32,13 @@ from kata.frontier import (
     resolve_frontier_artifact_hash,
 )
 from kata.lane_state import (
+    BENCHMARK_SNAPSHOT_SCHEMA_VERSION,
     CHALLENGE_STATE_SCHEMA_VERSION,
     PROMOTION_RECORD_SCHEMA_VERSION,
+    BenchmarkSnapshotState,
     ChallengeState,
     PromotionRecord,
+    write_benchmark_snapshot,
     write_challenge_state,
     write_promotion_record,
 )
@@ -567,6 +571,25 @@ def record_sn60_lane_provenance(
         screening_result=screening_result,
     )
     freshness_fingerprint = sn60_freshness_fingerprint(duel_summary)
+    write_benchmark_snapshot(
+        lane_id,
+        BenchmarkSnapshotState(
+            schema_version=BENCHMARK_SNAPSHOT_SCHEMA_VERSION,
+            sandbox_mirror_source=duel_summary.sandbox_source.sandbox_root,
+            sandbox_commit_hash=duel_summary.sandbox_source.sandbox_commit,
+            benchmark_dataset_id=Path(duel_summary.sandbox_source.benchmark_file).name,
+            benchmark_dataset_hash=duel_summary.sandbox_source.benchmark_sha256,
+            project_list_hash=sn60_project_list_hash(duel_summary.project_keys),
+            project_keys=list(duel_summary.project_keys),
+            container_images=[
+                bitsec_project_image(project_key)
+                for project_key in duel_summary.project_keys
+            ],
+            scorer_version=duel_summary.sandbox_source.scorer_version,
+            updated_at=datetime.now(UTC).isoformat(),
+        ),
+        public_root=public_root,
+    )
     challenge_path = write_challenge_state(
         lane_id,
         ChallengeState(
@@ -699,6 +722,11 @@ def sn60_local_replica_scores(duel_summary: Sn60DuelSummary) -> dict[str, list[f
         "frontier": [result.score for result in duel_summary.frontier.replica_results],
         "candidate": [result.score for result in duel_summary.candidate.replica_results],
     }
+
+
+def sn60_project_list_hash(project_keys: list[str]) -> str:
+    payload = json.dumps(sorted(project_keys))
+    return sha256(payload.encode("utf-8")).hexdigest()
 
 
 def sn60_freshness_fingerprint(duel_summary: Sn60DuelSummary) -> str:
