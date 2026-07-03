@@ -1,50 +1,75 @@
 # Roadmap & Milestones
 
-Kata is built to run many competition packs on one engine. This page tracks what is
-running today and what is planned next.
+**The goal: one-click mining.** Anyone should be able to pick a subnet and mine it with
+a proven, optimized agent — no ML expertise, no hand-tuning. Kata gets there by
+crowdsourcing that agent through open competition: contributors compete, and the winner
+(the **king**) becomes the ready-to-run agent for that subnet.
 
-## Current status
+The roadmap below moves from "we can crown the best agent for one subnet" to "anyone can
+mine any supported subnet in one click."
 
-**One pack is live: `sn60__bitsec` (miner mode).** It is the only competition
-registered and active in `lanes/registry.json`, and it runs the full loop end-to-end
-in production. The engine is pack-agnostic underneath, but SN60 is the single
-integration live today.
+---
 
-Working today:
+## Current status — v0.1: the competition engine
 
-- **Full competition loop** — submit → validate → screen → duel → decide → verify →
-  promote — driven through the pack registry.
-- **Isolated, fair execution** — agents run in an internet-blocked sandbox and are
-  pinned to one fixed model, so the king and every challenger are judged identically.
-- **Strict, objective promotion** — a challenger is promoted only if it beats the king
-  on the comparator (aggregated score, then codebases passed, then true positives),
-  and never if it has an invalid run.
+**One subnet is live: SN60 (`sn60__bitsec`, miner mode).** It is the only pack
+registered and active in `lanes/registry.json`, and it runs the full loop end-to-end in
+production. Working today:
+
+- **Full competition loop** — submit → screen → duel → decide → verify → promote —
+  driven through the pack registry.
+- **A real king** — the current best SN60 agent is always published under `kings/`.
+- **Isolated, fair execution** — agents run in an internet-blocked sandbox on one fixed
+  model, so the king and every challenger are judged identically.
+- **Strict, objective promotion** — a challenger wins only by beating the king on the
+  comparator (aggregated score → codebases passed → true positives), never with an
+  invalid run.
 - **GitHub automation** — webhook intake, a durable PR queue, and a resident service
   that runs the engine, comments results, and applies outcome labels.
-- **Reproducible provenance** — every duel records benchmark and artifact hashes; a
-  freshness check re-runs a result rather than merging it if the king or benchmark
-  changed underneath it.
+- **Reproducible provenance** — benchmark and artifact hashes on every duel, with a
+  freshness check that re-runs a stale result instead of merging it.
 - **Dashboard** — live evaluation status and current-king state.
-- **Faster decisive duels** — a clearly-decided challenger can be resolved without
-  running the entire benchmark, while genuine contenders are always evaluated in full.
 
-## Goals
+---
 
-### Grow the competition surface
+## Releases toward one-click mining
 
-- Broaden benchmark coverage within the SN60 pack.
-- Add new evaluator packs by registering them — no engine rewrite.
-- Run multiple packs side by side, each with its own king and isolated state.
+### v0.2 — Run the king
 
-### Strengthen trust
+Turn the winning agent into something a miner can actually run.
+
+- Package and publish the current king so any user can mine SN60 with it directly.
+- A single command to fetch the king and start mining.
+
+### v0.3 — More subnets
+
+Prove the engine is subnet-agnostic in practice, not just in design.
+
+- Add subnets beyond SN60 via the pack registry (new evaluator, new benchmark).
+- Run multiple subnets side by side, each with its own king and isolated state.
+- Per-subnet Gittensor labels so packs score independently.
+
+### v0.4 — Guided mining
+
+Remove the setup burden.
+
+- A simple flow to choose a subnet and start mining with its king.
+- Minimal configuration and clear, guided setup.
+
+### v1.0 — One-click mining
+
+The goal.
+
+- Pick any supported subnet and mine it with its optimized king agent in one click.
+- No ML expertise required to participate.
+
+---
+
+## Ongoing (every release)
 
 - Harden submission validation and anti-cheat checks.
-- Expand provenance and freshness guarantees as pack count grows.
-
-### Improve the experience
-
-- Dashboard: result history and per-pack leaderboards.
-- Operator tooling: smoother setup and clearer observability for running an instance.
+- Strengthen provenance and freshness guarantees as subnet count grows.
+- Improve dashboard history and per-subnet leaderboards.
 
 ## Proposing a milestone
 

@@ -12,19 +12,23 @@
   <img src="https://img.shields.io/badge/gittensor-integrated-2f6bff.svg" alt="Gittensor integrated">
 </p>
 
-Kata runs a continuous **"king of the hill"** tournament for AI agents. A contributor
-opens a pull request that adds **one** agent; Kata evaluates that agent head-to-head
-against the reigning champion — the **king** — on a fixed benchmark inside an isolated
-sandbox. If the challenger objectively beats the king, its PR is merged and it becomes
-the new king; otherwise the PR is closed. Agent quality becomes a merge decision, not a
-review opinion.
+**Kata builds the best AI agent for a subnet through open competition — so anyone can
+mine that subnet with a proven, optimized agent.**
 
-Kata is **registry-driven**: each competition is a *pack* — a self-contained
-benchmark, evaluator, and current king. The engine is built to run many packs, but
-**today exactly one pack is live: `sn60__bitsec`**, a security lane where agents find
-critical- and high-severity vulnerabilities in smart-contract code. Everything below —
-the architecture and workflow — is general to the engine; the SN60 pack is simply the
-one integration running today.
+Mining a subnet well usually takes deep, subnet-specific expertise. Kata crowdsources
+it: contributors compete to build the strongest agent for a subnet, and Kata keeps the
+current best one — the **king** — continuously battle-tested and ready to run.
+
+It works as a continuous **"king of the hill"** tournament. A contributor opens a pull
+request that adds **one** agent; Kata evaluates it head-to-head against the reigning
+king on a fixed benchmark, inside an isolated sandbox. If the challenger objectively
+wins, its PR is merged and it becomes the new king. The king is always the current best
+subnet-specific agent — agent quality becomes a merge decision, not a review opinion.
+
+Today Kata runs **one subnet: SN60** (`sn60__bitsec`), a security lane where agents
+find critical- and high-severity vulnerabilities in smart-contract code. The long-term
+goal is **one-click mining** — pick any supported subnet and mine it with Kata's
+optimized king agent, no ML expertise required.
 
 > **New here?**
 > To **compete**, jump to [How to submit an agent](#how-to-submit-an-agent).
@@ -42,8 +46,8 @@ one integration running today.
 - **Fair by design.** Contributors submit only an agent. The engine runs every agent
   on the *same* pinned model in an isolated sandbox, so agents compete on skill — not
   on private API access or a bigger budget.
-- **One engine, many packs.** Adding a new competition is a pack + registry change,
-  not an engine rewrite.
+- **One engine, many subnets.** Adding a new subnet is a pack + registry change, not
+  an engine rewrite — the same loop produces an optimized king for each.
 
 ---
 
@@ -145,27 +149,28 @@ Guidelines, principles, and what-belongs-where: **[CONTRIBUTING.md](CONTRIBUTING
 
 ## Gittensor integration
 
-Kata records the outcome of every duel as an **objective label** on the pull request,
-so an external system such as Gittensor can read each result without re-running the
-evaluation:
+Kata is registered on Gittensor, and `kata-bot` records the outcome of every duel as an
+**objective label** on the pull request so the result can be read without re-running the
+evaluation. This is implemented today for the live `sn60__bitsec` pack:
 
-- `kata:winner:<pack>` — a verified king promotion. Applied only by `kata-bot` or a
-  maintainer, and only after the duel and freshness checks pass.
-- `kata:mode:<mode>` — the competition mode.
+- `kata:winner:sn60__bitsec` — a verified king promotion. Applied only after the duel
+  and freshness checks pass.
+- `kata:mode:miner` — the competition mode.
 - `kata:invalid`, `kata:losing`, `kata:stale`, `kata:hold` — non-winning outcomes.
 
-To align Gittensor's **label and score rules** with Kata, configure the repository so
-that only `kata:winner:*` is treated as a valid outcome and the non-winning labels are
-excluded. Use a specific per-pack rule (e.g. `kata:winner:sn60__bitsec`) with a
-`kata:winner:*` fallback when packs should score differently; Gittensor resolves the
-most specific matching label. Because a winner label is only ever applied after a
-verified promotion, the label always reflects a real result — not PR size or opinion.
+Gittensor's **label and score rules** read these labels, so only a verified
+`kata:winner:*` promotion is recognized as a valid result — not PR size or opinion. As
+more subnets go live, each gets its own `kata:winner:<pack>` label, so packs can be
+scored independently.
 
 ---
 
 ## Roadmap
 
-See **[docs/milestones.md](docs/milestones.md)** for what's shipped and what's next.
+Kata's goal is **one-click mining** — letting anyone mine a supported subnet with its
+optimized king agent, no ML expertise required. See
+**[docs/milestones.md](docs/milestones.md)** for the current status and the releases
+toward it.
 
 ---
 
