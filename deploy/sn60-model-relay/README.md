@@ -59,12 +59,34 @@ docker exec kata_model_relay python -c \
 # {'status': 'ok', 'pinned_model': 'qwen/qwen3.6-35b-a3b'}
 ```
 
+## Measure token usage of a PR
+
+Every agent inference call passes through the relay, so it tallies exact token
+usage. To get the totals for one PR, zero the meter before it runs and read it
+after:
+
+```bash
+# 1. before the PR evaluates
+docker exec kata_model_relay python -c \
+  "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:8000/costs/reset', method='POST', data=b''))"
+
+# 2. ...let the PR run to completion...
+
+# 3. read the totals
+docker exec kata_model_relay python -c \
+  "import urllib.request,json; print(json.dumps(json.load(urllib.request.urlopen('http://127.0.0.1:8000/costs')), indent=2))"
+```
+
+This reports `requests`, `input_tokens`, and `output_tokens` for the agent
+inference of that PR. Scoring runs on the separate Chutes endpoint that never
+reaches the relay, so it is not included here.
+
 ## Configuration
 
-| Env var                   | Default                        | Meaning                                  |
-| ------------------------- | ------------------------------ | ---------------------------------------- |
-| `KATA_RELAY_UPSTREAM`     | `http://bitsec_proxy:8000`     | Real inference proxy to forward to       |
-| `KATA_RELAY_PINNED_MODEL` | `qwen/qwen3.6-35b-a3b`         | Model every inference request is forced onto |
-| `KATA_RELAY_HOST`         | `0.0.0.0`                      | Bind host                                |
-| `KATA_RELAY_PORT`         | `8000`                         | Bind port                                |
-| `KATA_RELAY_TIMEOUT`      | `900`                          | Upstream request timeout (seconds)       |
+| Env var                   | Default                    | Meaning                                       |
+| ------------------------- | -------------------------- | --------------------------------------------- |
+| `KATA_RELAY_UPSTREAM`     | `http://bitsec_proxy:8000` | Real inference proxy to forward to            |
+| `KATA_RELAY_PINNED_MODEL` | `qwen/qwen3.6-35b-a3b`     | Model every inference request is forced onto  |
+| `KATA_RELAY_HOST`         | `0.0.0.0`                  | Bind host                                     |
+| `KATA_RELAY_PORT`         | `8000`                     | Bind port                                     |
+| `KATA_RELAY_TIMEOUT`      | `900`                      | Upstream request timeout (seconds)            |

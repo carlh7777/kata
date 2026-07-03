@@ -9,9 +9,12 @@ from urllib.request import Request, urlopen
 import pytest
 
 from kata.sn60_model_relay import (
+    COST_METER,
     DEFAULT_PINNED_MODEL,
     DEFAULT_UPSTREAM,
+    CostMeter,
     build_server,
+    extract_usage,
     pin_model_in_body,
     resolve_pinned_model,
     resolve_timeout,
@@ -107,7 +110,15 @@ class _RecordingUpstream(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0] == "/boom":
             self._reply(502, {"detail": "upstream boom"})
             return
-        self._reply(200, {"ok": True, "echo_path": self.path}, extra_header=("X-Upstream", "yes"))
+        self._reply(
+            200,
+            {
+                "ok": True,
+                "echo_path": self.path,
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+            },
+            extra_header=("X-Upstream", "yes"),
+        )
 
     def _reply(self, status: int, payload: dict, extra_header=None) -> None:
         data = json.dumps(payload).encode()
@@ -131,6 +142,7 @@ class _RecordingUpstream(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def relay_and_upstream(monkeypatch):
+    COST_METER.reset()  # process-wide meter; keep each test independent
     upstream = ThreadingHTTPServer(("127.0.0.1", 0), _RecordingUpstream)
     upstream.records = []  # type: ignore[attr-defined]
     upstream.daemon_threads = True
@@ -139,6 +151,8 @@ def relay_and_upstream(monkeypatch):
 
     monkeypatch.setenv("KATA_RELAY_UPSTREAM", f"http://127.0.0.1:{upstream_port}")
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "qwen/pinned-test")
+    monkeypatch.setenv("KATA_RELAY_PRICE_INPUT_PER_M", "2")
+    monkeypatch.setenv("KATA_RELAY_PRICE_OUTPUT_PER_M", "5")
 
     relay = build_server("127.0.0.1", 0)
     threading.Thread(target=relay.serve_forever, daemon=True).start()
@@ -237,3 +251,99 @@ def test_unreachable_upstream_returns_502(monkeypatch) -> None:
         assert excinfo.value.code == 502
     finally:
         relay.shutdown()
+
+
+# --- cost accounting --------------------------------------------------------
+
+
+def test_extract_usage_reads_openai_usage_block() -> None:
+    body = json.dumps(
+        {
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 340,
+                "prompt_tokens_details": {"cached_tokens": 200},
+            }
+        }
+    ).encode()
+    assert extract_usage(body) == (1200, 340, 200)
+
+
+def test_extract_usage_falls_back_to_flattened_fields() -> None:
+    body = json.dumps({"input_tokens": 50, "output_tokens": 9, "cached_tokens": 3}).encode()
+    assert extract_usage(body) == (50, 9, 3)
+
+
+def test_extract_usage_returns_zeros_for_unreadable_body() -> None:
+    assert extract_usage(b"not json") == (0, 0, 0)
+    assert extract_usage(json.dumps([1, 2]).encode()) == (0, 0, 0)
+
+
+def test_cost_meter_accumulates_and_prices() -> None:
+    meter = CostMeter()
+    meter.add(1_000_000, 500_000, 0)
+    meter.add(1_000_000, 500_000, 0)
+    snap = meter.snapshot(0.14, 1.00)
+    assert snap["requests"] == 2
+    assert snap["input_tokens"] == 2_000_000
+    assert snap["output_tokens"] == 1_000_000
+    assert snap["usd_input"] == 0.28  # 2M * $0.14/M
+    assert snap["usd_output"] == 1.00  # 1M * $1.00/M
+    assert snap["usd_total"] == 1.28
+
+
+def test_cost_meter_reset_zeroes_totals() -> None:
+    meter = CostMeter()
+    meter.add(10, 10, 0)
+    meter.reset()
+    snap = meter.snapshot(1.0, 1.0)
+    assert snap["requests"] == 0
+    assert snap["input_tokens"] == 0
+    assert snap["usd_total"] == 0.0
+
+
+def _get_json(url: str) -> dict:
+    with urlopen(url, timeout=10) as response:
+        return json.loads(response.read())
+
+
+def test_costs_endpoint_reports_measured_inference_spend(relay_and_upstream) -> None:
+    base, upstream = relay_and_upstream
+
+    # Two inference calls; upstream reports 100 in / 20 out tokens each.
+    for _ in range(2):
+        _post(base + "/inference", json.dumps({"messages": []}).encode(),
+              {"Content-Type": "application/json"})
+
+    costs = _get_json(base + "/costs")
+    assert costs["requests"] == 2
+    assert costs["input_tokens"] == 200
+    assert costs["output_tokens"] == 40
+    assert costs["model"] == "qwen/pinned-test"
+    # Fixture prices: $2/1M in, $5/1M out.
+    assert costs["usd_input"] == round(200 / 1_000_000 * 2, 6)
+    assert costs["usd_output"] == round(40 / 1_000_000 * 5, 6)
+    assert costs["usd_total"] == round(costs["usd_input"] + costs["usd_output"], 6)
+    # /costs is answered locally, never forwarded upstream.
+    assert all(r["path"] != "/costs" for r in upstream.records)
+
+
+def test_costs_reset_zeroes_the_running_total(relay_and_upstream) -> None:
+    base, _ = relay_and_upstream
+    _post(base + "/inference", json.dumps({"messages": []}).encode(),
+          {"Content-Type": "application/json"})
+    assert _get_json(base + "/costs")["input_tokens"] == 100
+
+    _post(base + "/costs/reset", b"", {"Content-Type": "application/json"})
+
+    after = _get_json(base + "/costs")
+    assert after["requests"] == 0
+    assert after["input_tokens"] == 0
+    assert after["usd_total"] == 0.0
+
+
+def test_scoring_style_traffic_is_not_metered(relay_and_upstream) -> None:
+    base, _ = relay_and_upstream
+    # Non-/inference calls (e.g. metrics) must not count toward inference cost.
+    _post(base + "/metrics/job-runs/x/summary/reset", b"{}", {"Content-Type": "application/json"})
+    assert _get_json(base + "/costs")["requests"] == 0
