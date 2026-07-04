@@ -37,9 +37,22 @@ from kata.submissions import (
     verify_submission_result,
 )
 
+SCREENING_DESCRIPTION = (
+    "A privileged state-changing function can be called by any account, "
+    "allowing unauthorized changes to protected protocol settings."
+)
 VALID_MINER_AGENT = (
     "def agent_main(project_dir=None, inference_api=None):\n"
-    "    return {\"vulnerabilities\": []}\n"
+    "    return {\n"
+    "        \"vulnerabilities\": [{\n"
+    "            \"title\": \"Missing access control on privileged update\",\n"
+    "            \"description\": (\n"
+    "                \"A privileged state-changing function can be called by any \"\n"
+    "                \"account, allowing unauthorized changes to protected protocol settings.\"\n"
+    "            ),\n"
+    "            \"severity\": \"high\",\n"
+    "        }],\n"
+    "    }\n"
 )
 SEED_MINER_AGENT = (
     "def agent_main(project_dir=None, inference_api=None):\n"
@@ -369,7 +382,18 @@ def run_registry_lane_sn60_duel(tmp_path: Path, monkeypatch, *, agent_source=VAL
     (submission_root / "agent.py").write_text(agent_source, encoding="utf-8")
 
     def execute(context):
-        return {"success": True, "report": {"vulnerabilities": []}}
+        return {
+            "success": True,
+            "report": {
+                "vulnerabilities": [
+                    {
+                        "title": "Missing access control on privileged update",
+                        "description": SCREENING_DESCRIPTION,
+                        "severity": "high",
+                    }
+                ]
+            },
+        }
 
     def evaluate(context, report_payload):
         rate = 1.0 if context.variant_name == "candidate" else 0.0
@@ -395,7 +419,7 @@ def run_registry_lane_sn60_duel(tmp_path: Path, monkeypatch, *, agent_source=VAL
         benchmark_file=str(benchmark_path),
         sandbox_commit="commit-a",
         public_root=str(public_root),
-        screening_hook=lambda ctx: {"success": True, "report": {"vulnerabilities": []}},
+        screening_hook=execute,
         execution_hook=execute,
         evaluation_hook=evaluate,
     )
@@ -838,7 +862,14 @@ def test_promote_records_published_king_hash_for_non_normalized_agent(
     # king_is_current=False -> a permanent rerun-stale livelock.
     non_normalized = (
         "def agent_main(project_dir=None, inference_api=None):\n"
-        "    return {\"vulnerabilities\": []}"  # no trailing newline
+        "    return {\"vulnerabilities\": [{\n"
+        "        \"title\": \"Missing access control on privileged update\",\n"
+        "        \"description\": (\n"
+        "            \"A privileged state-changing function can be called by any \"\n"
+        "            \"account, allowing unauthorized changes to protected protocol settings.\"\n"
+        "        ),\n"
+        "        \"severity\": \"high\",\n"
+        "    }]}"  # no trailing newline
     )
     assert not non_normalized.endswith("\n")
 

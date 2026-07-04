@@ -67,7 +67,25 @@ Screening is the cheap reject gate:
 - one candidate sandbox execution
 - no king run
 
-If screening fails, the PR cannot promote and the full duel is skipped.
+Static screening rejects obvious cost-wasters before the sandbox starts:
+
+- helper files in SN60 V1 bundles
+- hardcoded provider keys or validator secret env references
+- benchmark-answer leakage indicators
+- async or non-callable `agent_main`
+- direct no-op returns such as `{"vulnerabilities": []}`
+
+Execution screening then requires one valid Bitsec-style report:
+
+- sandbox execution must complete successfully
+- report must contain a top-level `vulnerabilities` list
+- the list must contain at least one candidate finding
+- each finding must include a title and useful description
+- optional severity must be `critical`, `high`, `medium`, or `low`
+- reports are capped at 100 findings
+
+If screening fails, the PR is closed with the screening reason and the full duel
+is skipped.
 
 ### 3. Duel
 

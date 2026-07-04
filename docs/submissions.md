@@ -64,7 +64,18 @@ It must define a synchronous function named `agent_main`:
 
 ```python
 def agent_main(project_dir: str | None = None, inference_api: str | None = None) -> dict:
-    return {"vulnerabilities": []}
+    return {
+        "vulnerabilities": [
+            {
+                "title": "Missing access control on privileged update",
+                "description": (
+                    "A privileged state-changing function appears callable by any "
+                    "account, allowing unauthorized changes to protected settings."
+                ),
+                "severity": "high",
+            }
+        ]
+    }
 ```
 
 Requirements:
@@ -72,6 +83,7 @@ Requirements:
 - `agent_main` must be callable with no arguments.
 - It must return a JSON-serializable dictionary.
 - The returned dictionary must include a top-level `vulnerabilities` list.
+- Screening rejects direct no-op returns such as `{"vulnerabilities": []}`.
 - The file must contain valid Python syntax.
 - The file must not be the scaffold placeholder.
 - The implementation must be self-contained for SN60 V1.
@@ -173,8 +185,31 @@ def ask_model(inference_api, prompt):
 ```
 
 If the model call fails and your agent returns an empty `vulnerabilities` list,
-the run may still be valid but will find nothing. Test locally before opening a
-PR.
+screening treats the submission as a no-op and closes the PR before the full
+duel. Test locally before opening a PR.
+
+## Screening Checklist
+
+Screening is the first cost-control gate. It is intentionally stricter than the
+basic shape validator because it decides whether the expensive king-vs-candidate
+duel should run.
+
+Your submission should pass these checks:
+
+- `agent_main` is synchronous and callable with no arguments.
+- `agent_main` does real analysis; it must not directly return an empty
+  `vulnerabilities` list.
+- The one screening sandbox run finishes successfully.
+- The screening report is a JSON object with a top-level `vulnerabilities` list.
+- The screening report contains at least one candidate vulnerability.
+- Each candidate finding is a JSON object with a non-empty `title`.
+- Each candidate finding has a useful `description` of at least 40 characters.
+- If `severity` is present, use `critical`, `high`, `medium`, or `low`.
+- Do not return more than 100 candidate findings from screening.
+
+The screening finding does not guarantee a true positive. It only proves the
+agent can run and produce a meaningful Bitsec-style report before the validator
+pays for the full duel.
 
 ## PR Rules
 
@@ -195,7 +230,8 @@ Before opening a PR, verify:
 - `agent.py` exists.
 - `agent.py` defines synchronous `agent_main`.
 - `agent_main` works with no arguments.
-- `agent_main` returns `{"vulnerabilities": [...]}`.
+- `agent_main` returns at least one useful candidate vulnerability during
+  screening.
 - `agent_manifest.json` uses schema version `1`, runtime `python`, entrypoint
   `agent.py`.
 - `submission.json` uses schema version `2`, `subnet_pack`, mode `miner`, and a
@@ -228,6 +264,10 @@ Kata rejects submissions for:
 - async-only `agent_main`
 - required positional arguments that prevent no-argument invocation
 - missing top-level `vulnerabilities` list
+- direct empty-report or no-op `agent_main` implementations
+- empty screening reports
+- screening findings without a title or useful description
+- screening reports with more than 100 findings
 - scaffold or duplicate current-king agents
 - helper files in SN60 V1 bundles
 - symlinks

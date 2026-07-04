@@ -30,6 +30,8 @@ SN60_SCREENING_STATUS_PASSED = "passed"
 SN60_SCREENING_STATUS_FAILED = "failed"
 SN60_SCREENING_STAGE_STATIC = "static"
 SN60_SCREENING_STAGE_EXECUTION = "execution"
+SN60_SCREENING_MAX_FINDINGS = 100
+VALID_SCREENING_SEVERITIES = {"critical", "high", "medium", "low"}
 
 BENCHMARK_LEAK_TOKENS = (
     "curated-highs-only",
@@ -216,6 +218,11 @@ def validate_sn60_static_screening(candidate_root: str | Path) -> list[str]:
             reasons.append("Submission agent must define agent_main(...).")
     elif not function_supports_no_arg_invocation(agent_main):
         reasons.append("Submission agent must support no-argument invocation: agent_main().")
+    elif agent_main_returns_direct_empty_report(agent_main):
+        reasons.append(
+            "SN60 screening rejected a no-op agent: agent_main returns an empty "
+            "`vulnerabilities` list without doing any analysis."
+        )
 
     lowered_source = agent_source.lower()
     for token in BENCHMARK_LEAK_TOKENS:
@@ -241,7 +248,63 @@ def validate_sn60_screening_report(report_payload: dict[str, object]) -> list[st
     vulnerabilities = report.get("vulnerabilities")
     if not isinstance(vulnerabilities, list):
         reasons.append("SN60 screening report must contain a top-level `vulnerabilities` list.")
+        return dedupe(reasons)
+    if not vulnerabilities:
+        reasons.append(
+            "SN60 screening report must include at least one candidate vulnerability. "
+            "Empty reports are treated as no-op submissions."
+        )
+        return dedupe(reasons)
+    if len(vulnerabilities) > SN60_SCREENING_MAX_FINDINGS:
+        reasons.append(
+            "SN60 screening report includes too many findings "
+            f"({len(vulnerabilities)}; limit is {SN60_SCREENING_MAX_FINDINGS})."
+        )
+    for index, finding in enumerate(vulnerabilities, start=1):
+        if not isinstance(finding, dict):
+            reasons.append(f"SN60 screening finding #{index} must be a JSON object.")
+            continue
+        title = str(finding.get("title") or "").strip()
+        description = str(finding.get("description") or "").strip()
+        if not title:
+            reasons.append(f"SN60 screening finding #{index} must include a non-empty title.")
+        if len(description) < 40:
+            reasons.append(
+                f"SN60 screening finding #{index} must include a useful description "
+                "(at least 40 characters)."
+            )
+        severity = str(finding.get("severity") or "").strip().lower()
+        if severity and severity not in VALID_SCREENING_SEVERITIES:
+            reasons.append(
+                f"SN60 screening finding #{index} has unsupported severity `{severity}`."
+            )
     return dedupe(reasons)
+
+
+def agent_main_returns_direct_empty_report(agent_main: ast.FunctionDef) -> bool:
+    """Catch the common scaffold/no-op pattern without rejecting real analysis code."""
+    for return_node in iter_direct_function_returns(agent_main):
+        value = return_node.value
+        if not isinstance(value, ast.Dict):
+            continue
+        for key, item in zip(value.keys, value.values, strict=False):
+            if not (isinstance(key, ast.Constant) and key.value == "vulnerabilities"):
+                continue
+            if isinstance(item, ast.List) and not item.elts:
+                return True
+    return False
+
+
+def iter_direct_function_returns(function_node: ast.FunctionDef):
+    stack: list[ast.AST] = list(reversed(function_node.body))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Return):
+            yield node
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
 
 
 def build_screening_result(
@@ -307,7 +370,6 @@ def sn60_screening_freshness_fingerprint(
 def build_sn60_screening_id() -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"sn60-screening-{timestamp}-{secrets.token_hex(3)}"
-
 
 
 

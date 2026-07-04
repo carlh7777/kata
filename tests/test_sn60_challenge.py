@@ -21,6 +21,20 @@ from kata.lane_state import (
     load_promotion_record,
 )
 
+SCREENING_DESCRIPTION = (
+    "A privileged state-changing function can be called by any account, "
+    "allowing unauthorized changes to protected protocol settings."
+)
+VALID_SCREENING_REPORT = {
+    "vulnerabilities": [
+        {
+            "title": "Missing access control on privileged update",
+            "description": SCREENING_DESCRIPTION,
+            "severity": "high",
+        }
+    ]
+}
+
 
 def write_bundle(root: Path, title: str) -> None:
     root.mkdir(parents=True, exist_ok=True)
@@ -92,7 +106,7 @@ def test_run_sn60_challenge_decides_winner_and_records_lane_provenance(
         }
 
     def screen(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {"success": True, "report": {"vulnerabilities": []}}
+        return {"success": True, "report": VALID_SCREENING_REPORT}
 
     summary = run_sn60_challenge(
         king_artifact_path=str(king_root),
@@ -221,7 +235,7 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
     write_bundle(candidate_root, "candidate")
 
     def execute(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {"success": True, "report": {"vulnerabilities": []}}
+        return {"success": True, "report": VALID_SCREENING_REPORT}
 
     def evaluate(
         context: Sn60ReplicaContext,
@@ -245,7 +259,7 @@ def test_sn60_freshness_fingerprint_changes_with_sandbox_commit(tmp_path: Path) 
         }
 
     def screen(context: Sn60ReplicaContext) -> dict[str, object]:
-        return {"success": True, "report": {"vulnerabilities": []}}
+        return {"success": True, "report": VALID_SCREENING_REPORT}
 
     first = run_sn60_challenge(
         king_artifact_path=str(king_root),
@@ -299,7 +313,7 @@ def test_run_sn60_challenge_stops_before_duel_when_screening_fails(
     def execute(context: Sn60ReplicaContext) -> dict[str, object]:
         nonlocal execution_called
         execution_called = True
-        return {"success": True, "report": {"vulnerabilities": []}}
+        return {"success": True, "report": VALID_SCREENING_REPORT}
 
     summary = run_sn60_challenge(
         king_artifact_path=str(king_root),

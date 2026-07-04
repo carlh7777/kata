@@ -11,6 +11,23 @@ from kata.screening import (
     validate_sn60_static_screening,
 )
 
+SCREENING_DESCRIPTION = (
+    "A privileged state-changing function can be called by any account, "
+    "allowing unauthorized changes to protected protocol settings."
+)
+VALID_FINDING = {
+    "title": "Missing access control on privileged update",
+    "description": SCREENING_DESCRIPTION,
+    "severity": "high",
+}
+VALID_AGENT_SOURCE = (
+    "def agent_main(project_dir=None, inference_api=None):\n"
+    "    return {'vulnerabilities': [{"
+    "'title': 'Missing access control on privileged update', "
+    f"'description': {SCREENING_DESCRIPTION!r}, "
+    "'severity': 'high'}]}\n"
+)
+
 
 def write_bundle(root: Path, agent_source: str, *, helper_source: str | None = None) -> None:
     root.mkdir(parents=True, exist_ok=True)
@@ -38,8 +55,7 @@ def test_validate_sn60_static_screening_rejects_helper_files_and_leak_tokens(
     write_bundle(
         bundle_root,
         "KNOWN = 'curated-highs-only'\n"
-        "def agent_main(project_dir=None, inference_api=None):\n"
-        "    return {'vulnerabilities': []}\n",
+        + VALID_AGENT_SOURCE,
         helper_source="VALUE = 1\n",
     )
 
@@ -56,7 +72,7 @@ def test_validate_sn60_static_screening_rejects_async_agent_main(
     write_bundle(
         bundle_root,
         "async def agent_main(project_dir=None, inference_api=None):\n"
-        "    return {'vulnerabilities': []}\n",
+        "    return {'vulnerabilities': [{'title': 'x'}]}\n",
     )
 
     reasons = validate_sn60_static_screening(bundle_root)
@@ -86,7 +102,7 @@ def test_run_sn60_screening_persists_static_failure_without_execution(
     def execute(context: Sn60ReplicaContext) -> dict[str, object]:
         nonlocal execution_called
         execution_called = True
-        return {"success": True, "report": {"vulnerabilities": []}}
+        return {"success": True, "report": {"vulnerabilities": [VALID_FINDING]}}
 
     result = run_sn60_screening(
         candidate_artifact_path=str(bundle_root),
@@ -115,8 +131,7 @@ def test_run_sn60_screening_rejects_bad_execution_report(tmp_path: Path) -> None
     bundle_root = tmp_path / "candidate"
     write_bundle(
         bundle_root,
-        "def agent_main(project_dir=None, inference_api=None):\n"
-        "    return {'vulnerabilities': []}\n",
+        VALID_AGENT_SOURCE,
     )
 
     def execute(context: Sn60ReplicaContext) -> dict[str, object]:
@@ -143,8 +158,7 @@ def test_validate_sn60_static_screening_rejects_expanded_leak_tokens(
     write_bundle(
         bundle_root,
         "GROUND = 'ground_truth'\n"
-        "def agent_main(project_dir=None, inference_api=None):\n"
-        "    return {'vulnerabilities': []}\n",
+        + VALID_AGENT_SOURCE,
     )
 
     reasons = validate_sn60_static_screening(bundle_root)
@@ -164,7 +178,10 @@ def test_validate_sn60_static_screening_rejects_validator_secret_reference(
         "import os\n"
         "def agent_main(project_dir=None, inference_api=None):\n"
         "    os.environ.get('CHUTES_API_KEY')\n"
-        "    return {'vulnerabilities': []}\n",
+        "    return {'vulnerabilities': [{"
+        "'title': 'Missing access control on privileged update', "
+        f"'description': {SCREENING_DESCRIPTION!r}, "
+        "'severity': 'high'}]}\n",
     )
 
     reasons = validate_sn60_static_screening(bundle_root)
@@ -179,10 +196,76 @@ def test_validate_sn60_static_screening_rejects_hardcoded_chutes_key(
     write_bundle(
         bundle_root,
         "KEY = 'cpk_abcdefghij1234567890'\n"
+        + VALID_AGENT_SOURCE,
+    )
+
+    reasons = validate_sn60_static_screening(bundle_root)
+
+    assert any("hardcoded secret token" in reason for reason in reasons)
+
+
+def test_validate_sn60_static_screening_rejects_direct_empty_report(
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "candidate"
+    write_bundle(
+        bundle_root,
         "def agent_main(project_dir=None, inference_api=None):\n"
         "    return {'vulnerabilities': []}\n",
     )
 
     reasons = validate_sn60_static_screening(bundle_root)
 
-    assert any("hardcoded secret token" in reason for reason in reasons)
+    assert any("no-op agent" in reason for reason in reasons)
+
+
+def test_run_sn60_screening_rejects_empty_execution_report(tmp_path: Path) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    bundle_root = tmp_path / "candidate"
+    write_bundle(bundle_root, VALID_AGENT_SOURCE)
+
+    result = run_sn60_screening(
+        candidate_artifact_path=str(bundle_root),
+        project_key="project-alpha",
+        output_root=str(tmp_path / "runs"),
+        sandbox_source=source,
+        execution_hook=lambda _context: {"success": True, "report": {"vulnerabilities": []}},
+    )
+
+    assert not result.passed
+    assert result.stage == SN60_SCREENING_STAGE_EXECUTION
+    assert any("at least one candidate vulnerability" in reason for reason in result.reasons)
+
+
+def test_run_sn60_screening_rejects_thin_finding_description(tmp_path: Path) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    source = resolve_sn60_sandbox_source(
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="commit-1",
+        scorer_version="ScaBenchScorerV2",
+    )
+    bundle_root = tmp_path / "candidate"
+    write_bundle(bundle_root, VALID_AGENT_SOURCE)
+
+    result = run_sn60_screening(
+        candidate_artifact_path=str(bundle_root),
+        project_key="project-alpha",
+        output_root=str(tmp_path / "runs"),
+        sandbox_source=source,
+        execution_hook=lambda _context: {
+            "success": True,
+            "report": {"vulnerabilities": [{"title": "bug", "description": "too short"}]},
+        },
+    )
+
+    assert not result.passed
+    assert any("useful description" in reason for reason in result.reasons)
