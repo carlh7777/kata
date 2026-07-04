@@ -16,6 +16,7 @@ from kata.sn60_model_relay import (
     build_server,
     extract_usage,
     pin_model_in_body,
+    resolve_disable_reasoning,
     resolve_pinned_model,
     resolve_timeout,
     resolve_upstream,
@@ -54,6 +55,26 @@ def test_pin_model_preserves_tools_and_removes_sampling_fields() -> None:
     assert "seed" not in out
 
 
+def test_pin_model_disables_reasoning_by_default() -> None:
+    body = json.dumps({"model": "x", "messages": []}).encode()
+    out = json.loads(pin_model_in_body(body, "qwen/pinned"))
+    assert out["reasoning"] == {"enabled": False}
+
+
+def test_pin_model_overrides_miner_supplied_reasoning() -> None:
+    body = json.dumps(
+        {"model": "x", "messages": [], "reasoning": {"enabled": True, "effort": "high"}}
+    ).encode()
+    out = json.loads(pin_model_in_body(body, "qwen/pinned"))
+    assert out["reasoning"] == {"enabled": False}
+
+
+def test_pin_model_keeps_reasoning_when_disable_flag_off() -> None:
+    body = json.dumps({"model": "x", "messages": []}).encode()
+    out = json.loads(pin_model_in_body(body, "qwen/pinned", disable_reasoning=False))
+    assert "reasoning" not in out
+
+
 def test_pin_model_leaves_non_json_untouched() -> None:
     body = b"not json at all"
     assert pin_model_in_body(body, "qwen/pinned") == body
@@ -85,6 +106,19 @@ def test_resolve_pinned_model_default(monkeypatch) -> None:
 def test_resolve_pinned_model_override(monkeypatch) -> None:
     monkeypatch.setenv("KATA_RELAY_PINNED_MODEL", "vendor/model")
     assert resolve_pinned_model() == "vendor/model"
+
+
+def test_resolve_disable_reasoning_default(monkeypatch) -> None:
+    monkeypatch.delenv("KATA_RELAY_DISABLE_REASONING", raising=False)
+    assert resolve_disable_reasoning() is True
+
+
+def test_resolve_disable_reasoning_can_be_turned_off(monkeypatch) -> None:
+    for value in ("false", "0", "no", "OFF"):
+        monkeypatch.setenv("KATA_RELAY_DISABLE_REASONING", value)
+        assert resolve_disable_reasoning() is False
+    monkeypatch.setenv("KATA_RELAY_DISABLE_REASONING", "true")
+    assert resolve_disable_reasoning() is True
 
 
 def test_resolve_timeout_invalid_falls_back(monkeypatch) -> None:

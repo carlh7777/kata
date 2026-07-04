@@ -45,6 +45,16 @@ DEFAULT_TIMEOUT_SECONDS = 900
 DEFAULT_PRICE_INPUT_PER_M = 0.14
 DEFAULT_PRICE_OUTPUT_PER_M = 1.00
 
+# qwen3.6 is a reasoning model: with thinking left on it spends the whole
+# completion budget on reasoning tokens and returns an empty ``content``, so the
+# agent parses zero findings and every candidate ties the inert king. Force
+# reasoning off at the relay so every miner gets a usable, cheap completion.
+# ``reasoning:{"enabled": false}`` is the only form the upstream honours for this
+# model (``{"exclude": true}`` 502s; ``chat_template_kwargs.enable_thinking`` is
+# ignored). Override with KATA_RELAY_DISABLE_REASONING=false when pinning a
+# non-reasoning model.
+DEFAULT_DISABLE_REASONING = True
+
 # Only this path carries a model to overwrite; everything else is forwarded as-is.
 INFERENCE_PATH = "/inference"
 # Answered by the relay itself so operators can prove the process is up without
@@ -109,6 +119,14 @@ def resolve_pinned_model() -> str:
     if value and value.strip():
         return value.strip()
     return DEFAULT_PINNED_MODEL
+
+
+def resolve_disable_reasoning() -> bool:
+    """Whether to force reasoning/thinking off on every forwarded request."""
+    value = os.environ.get("KATA_RELAY_DISABLE_REASONING")
+    if value is None or not value.strip():
+        return DEFAULT_DISABLE_REASONING
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def resolve_timeout() -> float:
@@ -235,13 +253,15 @@ class CostMeter:
 COST_METER = CostMeter()
 
 
-def pin_model_in_body(body: bytes, model: str) -> bytes:
+def pin_model_in_body(body: bytes, model: str, disable_reasoning: bool = True) -> bytes:
     """Force the OpenAI-compatible request body onto ``model``.
 
     A body we cannot read as a JSON object is returned untouched: the upstream
     proxy is the authority on request validity. For JSON objects, remove
     miner-controlled sampling knobs so fairness is enforced at the real network
-    boundary, not only by static source checks.
+    boundary, not only by static source checks, and (when ``disable_reasoning``)
+    force reasoning off so the pinned reasoning model returns usable ``content``
+    instead of spending the whole budget on reasoning tokens.
     """
     try:
         payload = json.loads(body)
@@ -252,6 +272,8 @@ def pin_model_in_body(body: bytes, model: str) -> bytes:
     payload["model"] = model
     for field in FORBIDDEN_SAMPLING_FIELDS:
         payload.pop(field, None)
+    if disable_reasoning:
+        payload["reasoning"] = {"enabled": False}
     return json.dumps(payload).encode("utf-8")
 
 
@@ -290,7 +312,7 @@ class ModelPinningRelayHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        body = pin_model_in_body(body, resolve_pinned_model())
+        body = pin_model_in_body(body, resolve_pinned_model(), resolve_disable_reasoning())
 
         headers = {
             key: value
