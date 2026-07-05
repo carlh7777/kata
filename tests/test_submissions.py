@@ -962,10 +962,14 @@ def test_verify_sn60_registry_lane_detects_stale_benchmark_snapshot(
     assert any("SN60 benchmark lane has changed" in reason for reason in verification.reasons)
 
 
-def test_verify_sn60_registry_lane_detects_superseded_challenge_fingerprint(
+def test_verify_sn60_registry_lane_ignores_superseded_challenge_fingerprint(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    # The per-run sample fingerprint changes every duel and is never committed to
+    # the lane state, so it must NOT gate freshness -- otherwise a verified winner
+    # could never be promoted. A differing lane fingerprint leaves the result
+    # auto-merge-ready; only the benchmark version and king identity gate it.
     public_root, submission_root, summary, summary_path = run_registry_lane_sn60_duel(
         tmp_path, monkeypatch
     )
@@ -978,8 +982,8 @@ def test_verify_sn60_registry_lane_detects_superseded_challenge_fingerprint(
     )
 
     verification = verify_submission_result(str(submission_root), str(summary_path))
-    assert not verification.benchmark_is_current
-    assert not verification.auto_merge_ready
+    assert verification.benchmark_is_current
+    assert verification.auto_merge_ready
 
 
 def test_verify_and_promote_honor_explicit_public_root(

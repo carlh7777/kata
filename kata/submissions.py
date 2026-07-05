@@ -549,17 +549,22 @@ def sn60_lane_benchmark_is_current(
     *,
     public_root: str | None = None,
 ) -> bool:
-    """Freshness check against the lane's recorded benchmark snapshot and fingerprint."""
+    """Freshness check against the lane's recorded benchmark snapshot version.
+
+    Currency is gated on the benchmark snapshot version (scorer + sandbox
+    commit) only. It deliberately does NOT compare the per-run
+    ``freshness_fingerprint`` (which bundles the randomly sampled project keys):
+    that fingerprint differs on every duel and is never committed to the lane
+    state, so comparing it against the committed state would flag every winner as
+    "stale" and block promotion forever. King and submission identity are
+    verified separately (king_is_current / submission_matches).
+    """
     if not benchmark_snapshot_path(lane_id, public_root=public_root).exists():
         return False
     snapshot = load_benchmark_snapshot(lane_id, public_root=public_root)
     expected_version = f"{snapshot.scorer_version}@{short_hash(snapshot.sandbox_commit_hash)}"
     if summary.evaluator_version != expected_version:
         return False
-    if challenge_state_path(lane_id, public_root=public_root).exists():
-        challenge_state = load_challenge_state(lane_id, public_root=public_root)
-        if challenge_state.freshness_fingerprint != summary.primary_pool_fingerprint:
-            return False
     return True
 
 
