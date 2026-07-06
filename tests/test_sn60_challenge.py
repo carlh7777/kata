@@ -621,6 +621,14 @@ def test_run_sn60_round_ranks_candidates_and_picks_strict_winner(tmp_path: Path)
     assert progress["winner_submission_id"] == "cand-c"
     assert {c["submission_id"] for c in progress["candidates"]} == {"cand-a", "cand-b", "cand-c"}
     assert all(c["done"] == c["total"] and c["state"] == "done" for c in progress["candidates"])
+    # Each finished candidate carries its full result + per-problem breakdown, and
+    # the king's result is published too (for the detail page).
+    winner_entry = next(c for c in progress["candidates"] if c["submission_id"] == "cand-c")
+    assert winner_entry["aggregated_score"] == 0.75
+    assert winner_entry["beats_king"] is True
+    assert isinstance(winner_entry["projects"], list) and winner_entry["projects"]
+    assert progress["king"]["aggregated_score"] == 0.25
+    assert isinstance(progress["king"]["projects"], list) and progress["king"]["projects"]
 
     # Ranked best-first by detection; the strict winner is the top one that beats the king.
     assert [entry.submission_id for entry in result.entries] == ["cand-c", "cand-b", "cand-a"]

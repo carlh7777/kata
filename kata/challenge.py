@@ -467,6 +467,35 @@ def write_sn60_round_summary(path: Path, result: Sn60RoundResult) -> None:
     )
 
 
+def _sn60_variant_progress(summary: Sn60VariantSummary) -> dict[str, object]:
+    """Full per-variant result (scores + per-problem breakdown) for the live
+    progress feed, so the dashboard detail page can show a finished PR's — and the
+    cached king's — complete duel result the moment it lands."""
+    return {
+        "aggregated_score": summary.aggregated_score,
+        "true_positives": summary.true_positives,
+        "total_expected": summary.total_expected,
+        "total_found": summary.total_found,
+        "precision": summary.precision,
+        "f1_score": summary.f1_score,
+        "invalid_runs": summary.invalid_runs,
+        "codebase_pass_count": summary.codebase_pass_count,
+        "projects": [
+            {
+                "project_key": project.project_key,
+                "passed": project.passed,
+                "detection_rate": project.average_detection_rate,
+                "true_positives": project.true_positives,
+                "total_expected": project.total_expected,
+                "total_found": project.total_found,
+                "precision": project.precision,
+                "f1_score": project.f1_score,
+            }
+            for project in summary.project_summaries
+        ],
+    }
+
+
 def run_sn60_round(
     *,
     king_artifact_path: str,
@@ -568,8 +597,6 @@ def run_sn60_round(
             king_scoreboard_path=king_scoreboard_path,
             progress_callback=make_progress_callback(candidate_entry),
         )
-        candidate_entry["state"] = "done"
-        emit_progress()
         duel_summaries[submission_id] = duel_summary
         king_summary = duel_summary.king
         sandbox_source = duel_summary.sandbox_source
@@ -578,6 +605,15 @@ def run_sn60_round(
             candidate=duel_summary.candidate,
             screening_result=screening_result,
         )
+        # Publish this candidate's FINAL result and the king's (scored on the first
+        # duel, cached after) so the dashboard detail page shows full per-PR and
+        # per-problem detail the moment a PR finishes -- not only at round end.
+        candidate_entry["state"] = "done"
+        candidate_entry["beats_king"] = decision.promotion_ready
+        candidate_entry.update(_sn60_variant_progress(duel_summary.candidate))
+        progress["king"]["done"] = progress["king"]["total"]
+        progress["king"].update(_sn60_variant_progress(duel_summary.king))
+        emit_progress()
         entries.append(
             Sn60RoundEntry(
                 submission_id=submission_id,
