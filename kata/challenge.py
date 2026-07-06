@@ -548,7 +548,8 @@ def run_sn60_round(
         "schema_version": DEFAULT_SN60_ROUND_SCHEMA_VERSION,
         "state": "executing",
         "run_id": run_id,
-        "king": {"done": 0, "total": per_variant_total},
+        # The king is scored first (all problems), then each candidate one by one.
+        "king": {"done": 0, "total": per_variant_total, "state": "scoring"},
         "candidates": [
             {"submission_id": sid, "done": 0, "total": per_variant_total, "state": "queued"}
             for sid, _ in candidates
@@ -576,7 +577,10 @@ def run_sn60_round(
                 king = progress["king"]
                 if king["done"] < king["total"]:
                     king["done"] += 1
+                if king["done"] >= king["total"]:
+                    king["state"] = "done"
             elif candidate_entry["done"] < candidate_entry["total"]:
+                candidate_entry["state"] = "scoring"
                 candidate_entry["done"] += 1
                 acc["tp"] += replica_result.true_positives
                 acc["expected"] += replica_result.total_expected
@@ -603,8 +607,6 @@ def run_sn60_round(
         candidate_entry = next(
             entry for entry in progress["candidates"] if entry["submission_id"] == submission_id
         )
-        candidate_entry["state"] = "scoring"
-        emit_progress()
         duel_summary = run_sn60_bitsec_duel(
             king_artifact_path=king_artifact_path,
             candidate_artifact_path=candidate_artifact_path,
@@ -634,6 +636,7 @@ def run_sn60_round(
         candidate_entry["beats_king"] = decision.promotion_ready
         candidate_entry.update(_sn60_variant_progress(duel_summary.candidate))
         progress["king"]["done"] = progress["king"]["total"]
+        progress["king"]["state"] = "done"
         progress["king"].update(_sn60_variant_progress(duel_summary.king))
         emit_progress()
         entries.append(

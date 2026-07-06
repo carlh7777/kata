@@ -267,19 +267,9 @@ def run_sn60_bitsec_duel(
             base_evaluation_hook=resolved_evaluation_hook,
         )
 
-    candidate_results = score_variant_on_projects(
-        run_id=run_id,
-        run_root=run_root,
-        variant_name="candidate",
-        artifact_root=candidate_root,
-        project_keys=project_keys,
-        replicas_per_project=replicas_per_project,
-        sandbox_source=source,
-        execution_hook=resolved_execution_hook,
-        evaluation_hook=resolved_evaluation_hook,
-        eval_max_vulns=eval_max_vulns,
-        progress_callback=progress_callback,
-    )
+    # Score the king first: on the first duel this fills the king's 6 problems and
+    # caches them; on every later duel the king is served from that cache (no
+    # inference), so the round is "king (all 6) -> candidate -> candidate -> ...".
     king_results = score_variant_on_projects(
         run_id=run_id,
         run_root=run_root,
@@ -290,6 +280,19 @@ def run_sn60_bitsec_duel(
         sandbox_source=source,
         execution_hook=king_execution_hook,
         evaluation_hook=king_evaluation_hook,
+        eval_max_vulns=eval_max_vulns,
+        progress_callback=progress_callback,
+    )
+    candidate_results = score_variant_on_projects(
+        run_id=run_id,
+        run_root=run_root,
+        variant_name="candidate",
+        artifact_root=candidate_root,
+        project_keys=project_keys,
+        replicas_per_project=replicas_per_project,
+        sandbox_source=source,
+        execution_hook=resolved_execution_hook,
+        evaluation_hook=resolved_evaluation_hook,
         eval_max_vulns=eval_max_vulns,
         progress_callback=progress_callback,
     )

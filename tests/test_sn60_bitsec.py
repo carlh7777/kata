@@ -245,11 +245,13 @@ def test_duel_records_invalid_candidate_replica_and_continues(tmp_path: Path) ->
     )
 
     assert len(executed) == 12
+    # King is scored first (all 6), then the candidate (all 6).
     assert executed[:3] == [
-        ("candidate", "project-alpha", 1),
-        ("candidate", "project-alpha", 2),
-        ("candidate", "project-alpha", 3),
+        ("king", "project-alpha", 1),
+        ("king", "project-alpha", 2),
+        ("king", "project-alpha", 3),
     ]
+    assert [variant for variant, _project, _replica in executed[6:]] == ["candidate"] * 6
     assert summary.project_keys == ["project-alpha", "project-beta"]
     assert summary.candidate.invalid_runs == 2
     assert summary.candidate.successful_runs == 4
@@ -1109,9 +1111,9 @@ def test_duel_ignores_legacy_early_stop_env_and_runs_full_grid(tmp_path, monkeyp
     assert not (Path(summary.output_root) / "early_stop.json").exists()
 
 
-def test_duel_scores_candidate_variant_fully_then_king_variant(tmp_path: Path) -> None:
-    # Each variant is scored over all projects as one phase (candidate fully, then
-    # king fully), which keeps the king phase separable so it can be cached.
+def test_duel_scores_king_variant_fully_then_candidate_variant(tmp_path: Path) -> None:
+    # Each variant is scored over all projects as one phase, KING FIRST (so the
+    # king is scored + cached before the candidate), then the candidate fully.
     keys = ["project-alpha", "project-beta"]
     executed: list[tuple[str, str, int]] = []
 
@@ -1152,14 +1154,14 @@ def test_duel_scores_candidate_variant_fully_then_king_variant(tmp_path: Path) -
     )
 
     assert executed == [
-        ("candidate", "project-alpha", 1),
-        ("candidate", "project-alpha", 2),
-        ("candidate", "project-beta", 1),
-        ("candidate", "project-beta", 2),
         ("king", "project-alpha", 1),
         ("king", "project-alpha", 2),
         ("king", "project-beta", 1),
         ("king", "project-beta", 2),
+        ("candidate", "project-alpha", 1),
+        ("candidate", "project-alpha", 2),
+        ("candidate", "project-beta", 1),
+        ("candidate", "project-beta", 2),
     ]
 
 
