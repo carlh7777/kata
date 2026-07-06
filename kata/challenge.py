@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -565,9 +566,14 @@ def run_sn60_round(
         progress["updated_at"] = datetime.now(UTC).isoformat()
         path = Path(progress_path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        # Write atomically: the dashboard polls this file, and problems now finish
+        # in bursts, so a plain write could be read half-serialized. Write to a temp
+        # sibling and rename (atomic on the same filesystem).
+        tmp_path = path.with_name(f"{path.name}.tmp")
+        tmp_path.write_text(
             json.dumps(progress, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+        os.replace(tmp_path, path)
 
     # Accumulate running detection/precision/F1 and a growing per-problem list for
     # whichever variant is scoring, so the dashboard detail pages (king AND each

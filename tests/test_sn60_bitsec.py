@@ -245,13 +245,19 @@ def test_duel_records_invalid_candidate_replica_and_continues(tmp_path: Path) ->
     )
 
     assert len(executed) == 12
-    # King is scored first (all 6), then the candidate (all 6).
-    assert executed[:3] == [
-        ("king", "project-alpha", 1),
-        ("king", "project-alpha", 2),
-        ("king", "project-alpha", 3),
-    ]
-    assert [variant for variant, _project, _replica in executed[6:]] == ["candidate"] * 6
+    # King is scored first (all 6), then the candidate (all 6). Order within a
+    # variant is unspecified (its problems run concurrently), so assert the phase
+    # boundary and that every unit ran, not an exact sequence.
+    assert [variant for variant, _project, _replica in executed] == (
+        ["king"] * 6 + ["candidate"] * 6
+    )
+    expected_units = {
+        (project, replica)
+        for project in ("project-alpha", "project-beta")
+        for replica in (1, 2, 3)
+    }
+    assert {(p, r) for v, p, r in executed if v == "king"} == expected_units
+    assert {(p, r) for v, p, r in executed if v == "candidate"} == expected_units
     assert summary.project_keys == ["project-alpha", "project-beta"]
     assert summary.candidate.invalid_runs == 2
     assert summary.candidate.successful_runs == 4
@@ -1155,11 +1161,20 @@ def test_duel_scores_king_variant_fully_then_candidate_variant(tmp_path: Path) -
         evaluation_hook=evaluate,
     )
 
-    assert executed == [
+    # The king variant is fully scored before the candidate variant starts (the
+    # duel joins the king's workers before running the candidate). Order *within* a
+    # variant is unspecified because its problems are scored concurrently, so check
+    # the phase boundary and the full set of units rather than an exact sequence.
+    assert [unit[0] for unit in executed] == ["king"] * 4 + ["candidate"] * 4
+    king_units = sorted(unit for unit in executed if unit[0] == "king")
+    candidate_units = sorted(unit for unit in executed if unit[0] == "candidate")
+    assert king_units == [
         ("king", "project-alpha", 1),
         ("king", "project-alpha", 2),
         ("king", "project-beta", 1),
         ("king", "project-beta", 2),
+    ]
+    assert candidate_units == [
         ("candidate", "project-alpha", 1),
         ("candidate", "project-alpha", 2),
         ("candidate", "project-beta", 1),

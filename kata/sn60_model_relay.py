@@ -33,6 +33,7 @@ import json
 import os
 import sys
 import threading
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -302,43 +303,56 @@ class AgentBudget:
     """Per-agent inference budget, keyed by the per-problem token Kata embeds in
     the inference URL (``/j/<token>/inference``).
 
-    Scoring is serial (one agent container runs at a time) and each problem gets a
-    distinct token, so a change of token marks a new agent/problem and resets the
-    window. Keying on the token (not the network source) is what makes this correct
-    even though every agent reaches the relay from the same gateway address.
+    Each key -- one agent working one problem -- accrues its own call count and
+    output-token total independently, so problems scored *concurrently* (each with
+    a distinct token) never disturb one another's budget. Keying on the token (not
+    the network source) is what makes this correct even though every agent reaches
+    the relay from the same gateway address.
+
+    The budget is a *cap*, never a quota: the relay only ever counts and refuses the
+    agent's own calls, it never issues one. An agent that calls the model once is
+    charged for one call; the limits only bite once the agent itself tries to exceed
+    them.
     """
+
+    # Bound the number of tracked keys so a long-lived relay cannot leak memory
+    # across many rounds. Tokens are unique per problem and never reused, so
+    # evicting the oldest key is safe -- it will never be seen again.
+    MAX_TRACKED_KEYS = 8192
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._key: str | None = None
-        self._tokens = 0
-        self._calls = 0
+        self._by_key: OrderedDict[str, dict[str, int]] = OrderedDict()
+
+    def _bucket(self, key: str) -> dict[str, int]:
+        bucket = self._by_key.get(key)
+        if bucket is None:
+            bucket = {"tokens": 0, "calls": 0}
+            self._by_key[key] = bucket
+            while len(self._by_key) > self.MAX_TRACKED_KEYS:
+                self._by_key.popitem(last=False)
+        return bucket
 
     def allow(self, key: str) -> tuple[bool, str | None]:
         with self._lock:
-            if key != self._key:
-                self._key = key
-                self._tokens = 0
-                self._calls = 0
+            bucket = self._bucket(key)
             max_calls = resolve_agent_call_budget()
             max_tokens = resolve_agent_token_budget()
-            if max_calls and self._calls >= max_calls:
+            if max_calls and bucket["calls"] >= max_calls:
                 return False, f"inference call budget ({max_calls}) exhausted for this problem"
-            if max_tokens and self._tokens >= max_tokens:
+            if max_tokens and bucket["tokens"] >= max_tokens:
                 return False, f"output-token budget ({max_tokens}) exhausted for this problem"
             return True, None
 
     def record(self, key: str, output_tokens: int) -> None:
         with self._lock:
-            if key == self._key:
-                self._tokens += output_tokens
-                self._calls += 1
+            bucket = self._bucket(key)
+            bucket["tokens"] += output_tokens
+            bucket["calls"] += 1
 
     def reset(self) -> None:
         with self._lock:
-            self._key = None
-            self._tokens = 0
-            self._calls = 0
+            self._by_key.clear()
 
 
 AGENT_BUDGET = AgentBudget()

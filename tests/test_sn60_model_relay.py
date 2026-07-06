@@ -274,6 +274,32 @@ def test_inference_budget_is_per_problem_token_not_global(relay_and_upstream, mo
     AGENT_BUDGET.reset()
 
 
+def test_inference_budget_survives_interleaved_problem_tokens(
+    relay_and_upstream, monkeypatch
+) -> None:
+    # Problems are scored concurrently, so their tokens arrive interleaved. Each
+    # token must keep its own running count -- a different token in between must not
+    # reset it. (The old single-key budget reset on every token change, which would
+    # have let interleaving bypass the cap.)
+    base, upstream = relay_and_upstream
+    AGENT_BUDGET.reset()
+    monkeypatch.setenv("KATA_RELAY_AGENT_CALL_BUDGET", "2")
+    monkeypatch.setenv("KATA_RELAY_AGENT_TOKEN_BUDGET", "0")
+    body = json.dumps({"messages": [{"role": "user", "content": "x"}]}).encode()
+
+    # Interleave AAA and BBB so each ends up with exactly 2 served calls.
+    for token in ("AAA", "BBB", "AAA", "BBB"):
+        status, _, _ = _post(base + f"/j/{token}/inference", body)
+        assert status == 200
+
+    # Both are now at their 2-call cap; the next call for each is refused.
+    for token in ("AAA", "BBB"):
+        with pytest.raises(HTTPError) as excinfo:
+            _post(base + f"/j/{token}/inference", body)
+        assert excinfo.value.code == 429
+    AGENT_BUDGET.reset()
+
+
 def test_inference_model_is_pinned_before_reaching_upstream(relay_and_upstream) -> None:
     base, upstream = relay_and_upstream
     body = json.dumps(

@@ -7,6 +7,7 @@ import re
 import secrets
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +34,12 @@ DEFAULT_REPLICAS_PER_PROJECT = 1
 DEFAULT_BENCHMARK_FILENAME = "curated-highs-only-2025-08-08.json"
 DEFAULT_EXECUTION_SUBPROCESS_TIMEOUT_SECONDS = 35 * 60
 DEFAULT_EVALUATION_SUBPROCESS_TIMEOUT_SECONDS = 60 * 60
+# The problems in one variant are independent codebases and each replica spends
+# almost all its wall-clock waiting on inference, so scoring them concurrently is
+# a near-free speedup. Kept conservative by default to keep peak load on the
+# inference proxy / OpenRouter modest; raise via KATA_SN60_PROJECT_CONCURRENCY.
+PROJECT_CONCURRENCY_ENV_NAME = "KATA_SN60_PROJECT_CONCURRENCY"
+DEFAULT_PROJECT_CONCURRENCY = 3
 
 
 @dataclass(frozen=True)
@@ -194,6 +201,23 @@ def _env_positive_float(name: str, default: float) -> float:
     return default
 
 
+def _env_positive_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value and value.strip():
+        try:
+            parsed = int(value.strip())
+        except ValueError:
+            return default
+        if parsed > 0:
+            return parsed
+    return default
+
+
+def resolve_project_concurrency() -> int:
+    """How many problems of one variant to score at once (>= 1)."""
+    return _env_positive_int(PROJECT_CONCURRENCY_ENV_NAME, DEFAULT_PROJECT_CONCURRENCY)
+
+
 def sn60_codebase_pass_count(replica_results: list[Sn60ReplicaResult]) -> int:
     """Number of distinct projects that pass the configured replica threshold."""
     passes = 0
@@ -345,39 +369,59 @@ def score_variant_on_projects(
     Returns the flat replica results (unsummarized) so callers can score king and
     candidate independently and summarize each set once. ``progress_callback`` is
     invoked after each replica finishes so callers can publish live progress.
+
+    The replicas are independent -- disjoint bundles, reports and evaluation files,
+    and a distinct per-problem inference token each -- so they are scored
+    concurrently (up to ``resolve_project_concurrency()`` at a time). Only the
+    subprocess-heavy execution/evaluation runs on worker threads; the results are
+    collected and ``progress_callback`` is invoked from *this* thread as each unit
+    finishes, so the callback stays single-threaded and needs no locking.
     """
     variant_root = run_root / variant_name
-    replica_results: list[Sn60ReplicaResult] = []
 
+    contexts: list[Sn60ReplicaContext] = []
     for project_key in project_keys:
         for replica_index in range(1, replicas_per_project + 1):
             replica_root = variant_root / project_key / f"replica-{replica_index:02d}"
-            bundle_root = replica_root / "bundle"
             project_reports_root = replica_root / "reports" / project_key
-            project_reports_root.mkdir(parents=True, exist_ok=True)
-            stage_bundle(artifact_root, bundle_root)
-
-            context = Sn60ReplicaContext(
-                run_id=run_id,
-                variant_name=variant_name,
-                project_key=project_key,
-                replica_index=replica_index,
-                bundle_root=str(bundle_root),
-                reports_root=str(project_reports_root),
-                report_path=str(project_reports_root / "report.json"),
-                evaluation_path=str(project_reports_root / "evaluation.json"),
-                sandbox_source=sandbox_source,
-                eval_max_vulns=eval_max_vulns,
+            contexts.append(
+                Sn60ReplicaContext(
+                    run_id=run_id,
+                    variant_name=variant_name,
+                    project_key=project_key,
+                    replica_index=replica_index,
+                    bundle_root=str(replica_root / "bundle"),
+                    reports_root=str(project_reports_root),
+                    report_path=str(project_reports_root / "report.json"),
+                    evaluation_path=str(project_reports_root / "evaluation.json"),
+                    sandbox_source=sandbox_source,
+                    eval_max_vulns=eval_max_vulns,
+                )
             )
-            report_payload = execution_hook(context)
-            write_json(Path(context.report_path), report_payload)
-            evaluation_payload = evaluation_hook(context, report_payload)
-            write_json(Path(context.evaluation_path), evaluation_payload)
-            replica_result = build_replica_result(context, report_payload, evaluation_payload)
+
+    def run_one(context: Sn60ReplicaContext) -> Sn60ReplicaResult:
+        Path(context.reports_root).mkdir(parents=True, exist_ok=True)
+        stage_bundle(artifact_root, Path(context.bundle_root))
+        report_payload = execution_hook(context)
+        write_json(Path(context.report_path), report_payload)
+        evaluation_payload = evaluation_hook(context, report_payload)
+        write_json(Path(context.evaluation_path), evaluation_payload)
+        return build_replica_result(context, report_payload, evaluation_payload)
+
+    max_workers = max(1, min(resolve_project_concurrency(), len(contexts)))
+    replica_results: list[Sn60ReplicaResult] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(run_one, context): context for context in contexts}
+        for future in as_completed(futures):
+            context = futures[future]
+            replica_result = future.result()
             replica_results.append(replica_result)
             if progress_callback is not None:
                 progress_callback(context, replica_result)
 
+    # Completion order is nondeterministic under concurrency; sort so callers that
+    # summarize or display the flat list see a stable (project, replica) order.
+    replica_results.sort(key=lambda r: (r.project_key, r.replica_index))
     return replica_results
 
 
