@@ -68,10 +68,11 @@ def test_pin_model_adds_max_tokens_when_absent() -> None:
     assert out["max_tokens"] == 32000
 
 
-def test_pin_model_keeps_larger_requested_max_tokens() -> None:
-    body = json.dumps({"model": "x", "messages": [], "max_tokens": 50000}).encode()
+def test_pin_model_clamps_larger_requested_max_tokens() -> None:
+    # A call asking for more than the ceiling is clamped down so it can't run away.
+    body = json.dumps({"model": "x", "messages": [], "max_tokens": 82000}).encode()
     out = json.loads(pin_model_in_body(body, "qwen/pinned", max_output_tokens=32000))
-    assert out["max_tokens"] == 50000
+    assert out["max_tokens"] == 32000
 
 
 def test_pin_model_leaves_max_tokens_untouched_when_override_zero() -> None:

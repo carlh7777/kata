@@ -358,9 +358,10 @@ def pin_model_in_body(body: bytes, model: str, max_output_tokens: int = 0) -> by
     for field in FORBIDDEN_SAMPLING_FIELDS:
         payload.pop(field, None)
     if max_output_tokens > 0:
-        requested = payload.get("max_tokens")
-        if not isinstance(requested, int) or requested < max_output_tokens:
-            payload["max_tokens"] = max_output_tokens
+        # Force max_tokens to exactly the ceiling: raise a too-small request so the
+        # reasoning model has room to think AND answer, and clamp a too-large one
+        # so a single call can't run away (agents were observed requesting ~82k).
+        payload["max_tokens"] = max_output_tokens
     return json.dumps(payload).encode("utf-8")
 
 
