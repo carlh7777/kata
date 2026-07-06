@@ -13,6 +13,26 @@ This document lists what a valid SN60 miner submission must contain, what is rej
 and what to check before opening a pull request. For the full PR-to-promotion process,
 see [workflow.md](workflow.md).
 
+## How scoring works: rounds, not instant duels
+
+Opening a PR does **not** score it immediately. Your PR is screened and labeled
+`kata:pending` — it now waits for the next **competition round**. Rounds are run on a
+schedule; each round scores every pending agent against the current king on the *same*
+secretly-sampled problems and ranks them. The best agent that beats the king is merged and
+becomes the new king.
+
+What this means for you:
+
+- You may have **only one open PR** at a time. Extra open PRs are closed `kata:invalid`.
+- Iterate on that one PR: push new commits to improve it between rounds.
+- If you beat the king but weren't the top challenger, your PR stays open (`kata:pending`)
+  and competes again next round.
+- If your PR is benched as `kata:stale` (unchanged since it last competed), push any commit
+  to re-enter it. A newly promoted king also re-enters every pending PR automatically.
+- The labels you'll see: `kata:pending` (waiting), `kata:executing` (competing now),
+  `kata:winner:<pack>` (won), `kata:losing` (didn't beat the king), `kata:invalid`
+  (rejected), `kata:stale` (benched), `kata:hold` (won but merge blocked).
+
 ## Current Scope
 
 The live lane is:
@@ -201,26 +221,26 @@ def ask_model(inference_api, prompt):
 ```
 
 If a model call fails and your agent returns an empty `vulnerabilities` list, your
-PR is **not** closed — that problem simply scores 0 and the duel continues to the
+PR is **not** closed — that problem simply scores 0 and scoring continues to the
 rest. But an agent that finds nothing cannot out-detect the king, so test your
 inference contract locally first.
 
-The pinned model is a reasoning model. The validator gives it enough token budget
-to both think and answer, so your `max_tokens` is raised to a safe ceiling
-automatically — you do not need a large value. Read the final answer from
-`choices[0].message.content` (the reasoning trace is separate; the answer you want
-is in `content`).
+The pinned model today is **`qwen/qwen3.6-35b-a3b`**, a reasoning model. The validator
+gives it enough token budget to both think and answer, so your `max_tokens` is raised to a
+safe ceiling automatically — you do not need a large value. Read the final answer from
+`choices[0].message.content` (the reasoning trace is separate; the answer you want is in
+`content`).
 
 ## Screening Gate — what closes a PR, and what does not
 
 There are exactly **two** ways a PR ends without merging. Knowing which is which
 means nothing surprises you: a bad run on one problem will never sink your PR.
 
-### 1. Static screening — runs BEFORE the duel; the only thing that closes a PR early
+### 1. Static screening — runs BEFORE scoring; the only thing that closes a PR early
 
 These are cheap, source-only checks (no model calls). If any fail, the PR is
-closed immediately with a clear reason and **no duel cost is spent**. Pass all of
-these and your submission is guaranteed a fair, full duel:
+closed immediately with a clear reason and **no scoring cost is spent**. Pass all of
+these and your submission is guaranteed a fair, full evaluation in the next round:
 
 - Your PR touches exactly one `submissions/<pack>/<mode>/<id>/` directory and
   edits nothing else (not `kings/`, `lanes/`, evaluator code, tests, or docs).
@@ -240,30 +260,31 @@ these and your submission is guaranteed a fair, full duel:
   to read the answers.
 - Your agent is not a copy of the current king.
 
-### 2. The duel — bad, empty, or slow output NEVER closes your PR
+### 2. The round — bad, empty, or slow output NEVER closes your PR
 
-Once static screening passes, your agent runs against **every** sampled problem
-alongside the king. Here, a bad result is only a **0 for that problem** — it is
-never a rejection:
+Once static screening passes and the round runs, your agent is scored against **every**
+sampled problem alongside the king. Here, a bad result is only a **0 for that problem** —
+it is never a rejection:
 
-- If your agent errors, times out, or returns no findings on a problem, that
-  problem scores **0** and the duel **continues** to the rest. One bad problem
-  cannot sink an otherwise-good submission.
-- If your inference calls fail and you return an empty list, you are **not
-  rejected** — you simply score 0 and lose on detection. The PR comment tells you
-  how many problems produced findings (for example, "produced findings on 2/6
-  problems") so you can fix your inference contract and resubmit.
-- You lose the duel only when you do not out-detect the king across the sampled
-  problems.
+- If your agent errors, times out, or returns no findings on a problem, that problem scores
+  **0** and scoring **continues** to the rest. One bad problem cannot sink an
+  otherwise-good submission.
+- If your inference calls fail and you return an empty list, you are **not rejected** — you
+  simply score 0 and lose on detection. The PR comment tells you how many problems produced
+  findings (for example, "produced findings on 2/6 problems") so you can fix your inference
+  contract and try again next round.
+- You lose the round only when you do not out-detect the king across the sampled problems.
 
-**Takeaway:** take the static checklist seriously — it is the only early gate.
-After that it is purely about detection quality, and no single failed problem or
-flaky run will close your PR.
+**Takeaway:** take the static checklist seriously — it is the only early gate. After that
+it is purely about detection quality, and no single failed problem or flaky run will close
+your PR.
 
 ## PR Rules
 
 A valid miner PR must:
 
+- be your **only open PR** — one open PR per contributor; extra open PRs are closed
+  `kata:invalid`
 - target the default competition branch
 - touch exactly one submission directory
 - change at least one bundle file
@@ -303,10 +324,10 @@ uv run kata submission validate \
 
 ## Rejection Conditions
 
-These are the **static** conditions that close a PR *before* the duel. (Runtime
+These are the **static** conditions that close a PR *before* scoring. (Runtime
 output problems — empty findings, unparsable reports, timeouts, weak or wrongly
 shaped findings — are **not** rejections; they score 0 on that problem and the
-duel continues. See "Screening Gate" above.)
+scoring continues. See "Screening Gate" above.)
 
 Kata rejects submissions for:
 
