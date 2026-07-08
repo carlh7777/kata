@@ -5,23 +5,23 @@ from pathlib import Path
 
 import pytest
 
-from kata.challenge import (
-    SN60_MINER_LANE_ID,
-    evaluate_sn60_promotion,
-    load_challenge_summary,
-    run_sn60_challenge,
-    run_sn60_round,
-)
 from kata.evaluators.sn60_bitsec import (
     Sn60ProjectAggregate,
     Sn60ReplicaContext,
     Sn60ReplicaResult,
     Sn60VariantSummary,
 )
-from kata.lane_state import (
+from kata.state_system.lane import (
     load_benchmark_snapshot,
     load_challenge_state,
     load_promotion_record,
+)
+from kata.validator_system import (
+    SN60_MINER_LANE_ID,
+    evaluate_sn60_promotion,
+    load_challenge_summary,
+    run_sn60_challenge,
+    run_sn60_round,
 )
 
 SCREENING_DESCRIPTION = (

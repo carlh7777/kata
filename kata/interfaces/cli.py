@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -20,7 +19,7 @@ from kata.state_system.lane import (
     sync_pack_registry,
     write_lane_metadata,
 )
-from kata.submissions import (
+from kata.submission_system import (
     SUPPORTED_SUBMISSION_MODES,
     decide_submission_action,
     evaluate_submission,
@@ -33,20 +32,15 @@ from kata.submissions import (
     render_submission_json,
     render_submission_validation,
     render_submission_verification,
-    resolve_sn60_project_keys,
     validate_submission,
     verify_submission_result,
 )
 from kata.validator_system import (
     load_challenge_summary,
     render_challenge_summary,
+    resolve_sn60_project_keys,
     run_sn60_round,
 )
-
-
-def _public_run_sn60_round():
-    public_module = sys.modules.get("kata.cli")
-    return getattr(public_module, "run_sn60_round", run_sn60_round)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -578,7 +572,7 @@ def handle_round(args: argparse.Namespace) -> int:
         sandbox_commit=args.sn60_sandbox_commit,
         king_artifact_hash=hash_bundle_root(Path(args.king_path).expanduser().resolve()),
     )
-    result = _public_run_sn60_round()(
+    result = run_sn60_round(
         king_artifact_path=args.king_path,
         candidates=candidates,
         project_keys=project_keys,

@@ -6,9 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from kata.agent_bundle import AGENT_MANIFEST_FILENAME, write_agent_manifest
-from kata.challenge import run_sn60_challenge
-from kata.lane_state import (
+from kata.screening_system.rules import hash_submission_bundle
+from kata.state_system.lane import (
     KING_STATE_SCHEMA_VERSION,
     LANE_METADATA_SCHEMA_VERSION,
     EvaluatorLaneMetadata,
@@ -21,21 +20,21 @@ from kata.lane_state import (
     write_lane_king_state,
     write_lane_metadata,
 )
-from kata.submissions import (
+from kata.submission_system import (
     PR_ACTION_CLOSE_INVALID,
     PR_ACTION_EVALUATE,
     PR_ACTION_MERGE,
     PR_ACTION_RERUN_STALE,
     decide_submission_action,
     evaluate_submission,
-    hash_submission_bundle,
     init_submission,
     inspect_pull_request,
     promote_submission_result,
-    sample_sn60_project_keys,
     validate_submission,
     verify_submission_result,
 )
+from kata.submission_system.bundle import AGENT_MANIFEST_FILENAME, write_agent_manifest
+from kata.validator_system import run_sn60_challenge, sample_sn60_project_keys
 
 SCREENING_DESCRIPTION = (
     "A privileged state-changing function can be called by any account, "
@@ -782,7 +781,10 @@ def test_evaluate_submission_uses_seeded_lane_king_for_registry_lane(
         calls.update(kwargs)
         return sentinel
 
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -834,7 +836,10 @@ def test_evaluate_submission_uses_benchmark_project_keys_by_default(
         return sentinel
 
     monkeypatch.delenv("KATA_SN60_PROJECT_KEYS", raising=False)
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -891,7 +896,10 @@ def test_evaluate_submission_samples_benchmark_project_keys_from_env(
         "kata.validator_system.project_selection.secrets.token_hex",
         lambda _size: "nonce-1",
     )
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -986,7 +994,10 @@ def test_explicit_sn60_project_keys_override_sampling_env(
 
     monkeypatch.setenv("KATA_SN60_PROJECT_SAMPLE_SIZE", "1")
     monkeypatch.delenv("KATA_SN60_PROJECT_SAMPLE_SECRET", raising=False)
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),
@@ -1059,7 +1070,10 @@ def test_evaluate_submission_selects_sn60_adapter_by_registry_evaluator_id(
         calls.update(kwargs)
         return sentinel
 
-    monkeypatch.setattr("kata.submissions.run_sn60_challenge", fake_run_sn60_challenge)
+    monkeypatch.setattr(
+        "kata.submission_system.workflow.run_sn60_challenge",
+        fake_run_sn60_challenge,
+    )
 
     summary = evaluate_submission(
         str(submission_root),

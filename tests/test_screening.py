@@ -4,14 +4,14 @@ import json
 from pathlib import Path
 
 from kata.evaluators.sn60_bitsec import Sn60ReplicaContext, resolve_sn60_sandbox_source
-from kata.screening import (
+from kata.screening_system import screen_submission
+from kata.screening_system.models import ScreeningFinding
+from kata.validator_system.screening import (
     SN60_SCREENING_STAGE_EXECUTION,
     SN60_SCREENING_STAGE_STATIC,
     run_sn60_screening,
     validate_sn60_static_screening,
 )
-from kata.screening_system import screen_submission
-from kata.screening_system.models import ScreeningFinding
 
 SCREENING_DESCRIPTION = (
     "A privileged state-changing function can be called by any account, "

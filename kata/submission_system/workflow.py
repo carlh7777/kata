@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -91,11 +90,6 @@ parse_sn60_project_sample_size_from_env = (
 resolve_sn60_project_keys = _validator_system.resolve_sn60_project_keys
 run_sn60_challenge = _validator_system.run_sn60_challenge
 sample_sn60_project_keys = _validator_system.sample_sn60_project_keys
-
-
-def _public_run_sn60_challenge():
-    public_module = sys.modules.get("kata.submissions")
-    return getattr(public_module, "run_sn60_challenge", run_sn60_challenge)
 
 
 def init_submission(
@@ -288,7 +282,7 @@ def evaluate_submission(
             "SN60 miner evaluation requires at least one project key in the "
             "resolved benchmark snapshot."
         )
-    return _public_run_sn60_challenge()(
+    return run_sn60_challenge(
         king_artifact_path=king_artifact_path,
         candidate_artifact_path=validation.submission_path,
         project_keys=project_keys,
