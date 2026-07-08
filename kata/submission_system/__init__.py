@@ -39,6 +39,13 @@ from kata.submission_system.models import (
     SubmissionValidationResult,
     SubmissionVerificationResult,
 )
+from kata.submission_system.rendering import (
+    render_pull_request_inspection,
+    render_submission_decision,
+    render_submission_json,
+    render_submission_validation,
+    render_submission_verification,
+)
 from kata.submission_system.validation import (
     render_screening_finding,
     validate_changed_paths,
@@ -78,7 +85,12 @@ __all__ = [
     "normalize_changed_paths",
     "read_changed_paths_file",
     "read_submission_subnet_pack",
+    "render_pull_request_inspection",
     "render_screening_finding",
+    "render_submission_decision",
+    "render_submission_json",
+    "render_submission_validation",
+    "render_submission_verification",
     "required_submission_entrypoint_reason",
     "resolve_submission_descriptor",
     "validate_changed_paths",
