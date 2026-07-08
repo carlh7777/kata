@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import difflib
 import hashlib
 import json
 import os
@@ -84,6 +85,7 @@ SN60_PROJECT_SAMPLE_SECRET_ENV = "KATA_SN60_PROJECT_SAMPLE_SECRET"
 MAX_SUBMISSION_BUNDLE_FILES = 16
 MAX_SUBMISSION_FILE_BYTES = 64 * 1024
 MAX_SUBMISSION_BUNDLE_BYTES = 128 * 1024
+KING_NEAR_COPY_SIMILARITY_THRESHOLD = 0.85
 FORBIDDEN_ENV_REFERENCE_TOKENS = (
     "KATA_VALIDATOR_API_KEY",
     "KATA_VALIDATOR_API_BASE",
@@ -1189,6 +1191,16 @@ def validate_submission_candidate(
             public_root=public_root,
         )
     )
+    king_review_reasons = validate_submission_near_copy_of_lane_king(
+        metadata=metadata,
+        bundle_files=bundle_files,
+        public_root=public_root,
+    )
+    if king_review_reasons:
+        screening_review_reasons.extend(king_review_reasons)
+        screening_score += 4
+        if screening_status != "reject" and screening_review_mode_enabled():
+            screening_status = "review"
     return SubmissionCandidateValidation(
         reasons=dedupe(reasons),
         screening_status=screening_status,
@@ -1630,6 +1642,42 @@ def validate_submission_not_copycat(
     return dedupe(reasons)
 
 
+def validate_submission_near_copy_of_lane_king(
+    *,
+    metadata: SubmissionMetadata,
+    bundle_files: dict[str, str],
+    public_root: str | None = None,
+) -> list[str]:
+    candidate_agent = bundle_files.get(AGENT_ENTRY_FILENAME)
+    if candidate_agent is None:
+        return []
+    evaluator_entry = find_evaluator_pack_entry(
+        metadata.repo_pack, metadata.mode, public_root=public_root
+    )
+    if evaluator_entry is None:
+        return []
+    king_agent_path = (
+        resolve_public_king_root(
+            public_root=public_root,
+            repo_pack=metadata.repo_pack,
+            mode=metadata.mode,
+        )
+        / AGENT_ENTRY_FILENAME
+    )
+    if not king_agent_path.exists():
+        return []
+    king_agent = king_agent_path.read_text(encoding="utf-8")
+    if python_sources_equivalent(candidate_agent, king_agent):
+        return []
+    similarity = python_source_similarity(candidate_agent, king_agent)
+    if similarity < KING_NEAR_COPY_SIMILARITY_THRESHOLD:
+        return []
+    return [
+        "Screening review required: submission agent is highly similar to the "
+        f"current lane king implementation (similarity {similarity:.2f})."
+    ]
+
+
 def validate_submission_not_copycat_of_lane_king(
     *,
     lane_id: str,
@@ -1659,3 +1707,28 @@ def python_sources_equivalent(left: str, right: str) -> bool:
         right_tree,
         include_attributes=False,
     )
+
+
+def python_source_similarity(left: str, right: str) -> float:
+    return difflib.SequenceMatcher(
+        None,
+        normalize_python_source_for_similarity(left),
+        normalize_python_source_for_similarity(right),
+    ).ratio()
+
+
+def normalize_python_source_for_similarity(source: str) -> str:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return "\n".join(line.strip() for line in source.splitlines() if line.strip())
+    return ast.dump(tree, include_attributes=False)
+
+
+def screening_review_mode_enabled() -> bool:
+    return os.environ.get("KATA_SCREENING_REVIEW_MODE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }

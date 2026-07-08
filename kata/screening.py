@@ -329,6 +329,11 @@ def validate_sn60_static_screening(candidate_root: str | Path) -> list[str]:
             "SN60 screening rejected a no-op agent: agent_main returns an empty "
             "`vulnerabilities` list without doing any analysis."
         )
+    elif agent_main_returns_direct_constant_report(agent_main):
+        reasons.append(
+            "SN60 screening rejected a fake agent: agent_main returns a constant "
+            "canned vulnerability report without reading project input."
+        )
 
     lowered_source = agent_source.lower()
     for token in BENCHMARK_LEAK_TOKENS:
@@ -419,6 +424,22 @@ def agent_main_returns_direct_empty_report(agent_main: ast.FunctionDef) -> bool:
             if not (isinstance(key, ast.Constant) and key.value == "vulnerabilities"):
                 continue
             if isinstance(item, ast.List) and not item.elts:
+                return True
+    return False
+
+
+def agent_main_returns_direct_constant_report(agent_main: ast.FunctionDef) -> bool:
+    """Reject literal canned reports while allowing agents that build findings from analysis."""
+    for return_node in iter_direct_function_returns(agent_main):
+        value = return_node.value
+        if not isinstance(value, ast.Dict):
+            continue
+        for key, item in zip(value.keys, value.values, strict=False):
+            if not (isinstance(key, ast.Constant) and key.value == "vulnerabilities"):
+                continue
+            if isinstance(item, ast.List) and item.elts and all(
+                isinstance(element, ast.Dict) for element in item.elts
+            ):
                 return True
     return False
 

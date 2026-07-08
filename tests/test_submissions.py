@@ -43,16 +43,18 @@ SCREENING_DESCRIPTION = (
 )
 VALID_MINER_AGENT = (
     "def agent_main(project_dir=None, inference_api=None):\n"
+    "    source_hint = str(project_dir or '')\n"
+    "    finding = {\n"
+    "        \"title\": \"Missing access control on privileged update\",\n"
+    "        \"description\": (\n"
+    "            \"A privileged state-changing function can be called by any \"\n"
+    "            \"account, allowing unauthorized changes to protected protocol settings.\"\n"
+    "        ) + source_hint[:0],\n"
+    "        \"severity\": \"high\",\n"
+    "        \"file\": \"contracts/Admin.sol\",\n"
+    "    }\n"
     "    return {\n"
-    "        \"vulnerabilities\": [{\n"
-    "            \"title\": \"Missing access control on privileged update\",\n"
-    "            \"description\": (\n"
-    "                \"A privileged state-changing function can be called by any \"\n"
-    "                \"account, allowing unauthorized changes to protected protocol settings.\"\n"
-    "            ),\n"
-    "            \"severity\": \"high\",\n"
-    "            \"file\": \"contracts/Admin.sol\",\n"
-    "        }],\n"
+    "        \"vulnerabilities\": [finding],\n"
     "    }\n"
 )
 SEED_MINER_AGENT = (
@@ -716,6 +718,45 @@ def test_validate_submission_rejects_copy_of_lane_king(
     assert not result.is_valid
 
 
+def test_validate_submission_reviews_near_copy_of_lane_king(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    public_root = tmp_path / "kata-root"
+    write_evaluator_lane(public_root)
+    monkeypatch.setenv("KATA_ROOT", str(public_root))
+    monkeypatch.setenv("KATA_SCREENING_REVIEW_MODE", "1")
+
+    king_root = public_root / "kings" / "sn60__bitsec" / "miner"
+    king_root.mkdir(parents=True)
+    king_agent = VALID_MINER_AGENT
+    (king_root / "agent.py").write_text(king_agent, encoding="utf-8")
+
+    repo_root = tmp_path / "Kata"
+    submission_root = init_submission(
+        repo_pack="sn60__bitsec",
+        mode="miner",
+        submission_id="alice-20260702-01",
+        output_root=str(repo_root / "submissions"),
+    )
+    near_copy = king_agent.replace(
+        "    return {\n",
+        "    x = 0\n    return {\n",
+        1,
+    )
+    (submission_root / "agent.py").write_text(near_copy, encoding="utf-8")
+
+    result = validate_submission(str(submission_root), repo_root=str(repo_root))
+
+    assert result.reasons == []
+    assert result.is_valid
+    assert result.screening_status == "review"
+    assert any(
+        "highly similar to the current lane king" in reason
+        for reason in result.screening_review_reasons
+    )
+
+
 def test_evaluate_submission_uses_seeded_lane_king_for_registry_lane(
     tmp_path: Path,
     monkeypatch,
@@ -1073,15 +1114,17 @@ def test_promote_records_published_king_hash_for_non_normalized_agent(
     # king_is_current=False -> a permanent rerun-stale livelock.
     non_normalized = (
         "def agent_main(project_dir=None, inference_api=None):\n"
-        "    return {\"vulnerabilities\": [{\n"
+        "    source_hint = str(project_dir or '')\n"
+        "    finding = {\n"
         "        \"title\": \"Missing access control on privileged update\",\n"
         "        \"description\": (\n"
         "            \"A privileged state-changing function can be called by any \"\n"
         "            \"account, allowing unauthorized changes to protected protocol settings.\"\n"
-        "        ),\n"
+        "        ) + source_hint[:0],\n"
         "        \"severity\": \"high\",\n"
         "        \"file\": \"contracts/Admin.sol\",\n"
-        "    }]}"  # no trailing newline
+        "    }\n"
+        "    return {\"vulnerabilities\": [finding]}"  # no trailing newline
     )
     assert not non_normalized.endswith("\n")
 

@@ -25,11 +25,13 @@ VALID_FINDING = {
 }
 VALID_AGENT_SOURCE = (
     "def agent_main(project_dir=None, inference_api=None):\n"
-    "    return {'vulnerabilities': [{"
+    "    source_hint = str(project_dir or '')\n"
+    "    finding = {"
     "'title': 'Missing access control on privileged update', "
-    f"'description': {SCREENING_DESCRIPTION!r}, "
+    f"'description': {SCREENING_DESCRIPTION!r} + source_hint[:0], "
     "'severity': 'high', "
-    "'file': 'contracts/Admin.sol'}]}\n"
+    "'file': 'contracts/Admin.sol'}\n"
+    "    return {'vulnerabilities': [finding]}\n"
 )
 
 
@@ -257,18 +259,20 @@ def test_screen_submission_keeps_ambiguous_fingerprint_as_review_in_strict_mode(
         "        and 'grantorVesting' in source\n"
         "        and 'stepsClaimed' in source\n"
         "    ):\n"
-        "        return {'vulnerabilities': [{\n"
+        "        suspicious = {\n"
         "            'title': 'Suspicious static issue',\n"
         "            'description': 'This is a long enough suspicious static report.',\n"
         "            'severity': 'high',\n"
         "            'file': 'contracts/Example.sol',\n"
-        "        }]}\n"
-        "    return {'vulnerabilities': [{\n"
+        "        }\n"
+        "        return {'vulnerabilities': [suspicious]}\n"
+        "    generic = {\n"
         "        'title': 'Generic issue',\n"
         f"        'description': {SCREENING_DESCRIPTION!r},\n"
         "        'severity': 'high',\n"
         "        'file': 'contracts/Admin.sol',\n"
-        "    }]}\n",
+        "    }\n"
+        "    return {'vulnerabilities': [generic]}\n",
     )
 
     decision = screen_submission(
@@ -301,13 +305,15 @@ def test_screen_submission_attaches_llm_review_for_review_findings(
         "def agent_main(project_dir=None, inference_api=None):\n"
         "    source = ''\n"
         "    if 'SecondSwap_VestingManager' in source and 'grantorVesting' in source:\n"
-        "        return {'vulnerabilities': [{'title': 'x', 'description': 'y'}]}\n"
-        "    return {'vulnerabilities': [{\n"
+        "        suspicious = {'title': 'x', 'description': 'y'}\n"
+        "        return {'vulnerabilities': [suspicious]}\n"
+        "    generic = {\n"
         "        'title': 'Generic issue',\n"
         f"        'description': {SCREENING_DESCRIPTION!r},\n"
         "        'severity': 'high',\n"
         "        'file': 'contracts/Admin.sol',\n"
-        "    }]}\n",
+        "    }\n"
+        "    return {'vulnerabilities': [generic]}\n",
     )
 
     def fake_llm_review(**_kwargs):
@@ -420,6 +426,26 @@ def test_validate_sn60_static_screening_rejects_async_agent_main(
     reasons = validate_sn60_static_screening(bundle_root)
 
     assert any("must be a synchronous function" in reason for reason in reasons)
+
+
+def test_validate_sn60_static_screening_rejects_constant_canned_report(
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "candidate"
+    write_bundle(
+        bundle_root,
+        "def agent_main(project_dir=None, inference_api=None):\n"
+        "    return {'vulnerabilities': [{\n"
+        "        'title': 'Always same issue',\n"
+        f"        'description': {SCREENING_DESCRIPTION!r},\n"
+        "        'severity': 'high',\n"
+        "        'file': 'contracts/Admin.sol',\n"
+        "    }]}\n",
+    )
+
+    reasons = validate_sn60_static_screening(bundle_root)
+
+    assert any("constant canned vulnerability report" in reason for reason in reasons)
 
 
 def test_run_sn60_screening_persists_static_failure_without_execution(

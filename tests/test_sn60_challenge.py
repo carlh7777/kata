@@ -44,7 +44,8 @@ def write_bundle(root: Path, title: str) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "agent.py").write_text(
         "def agent_main(project_dir=None, inference_api=None):\n"
-        f"    return {{'vulnerabilities': [{{'title': '{title}'}}]}}\n",
+        f"    finding = {{'title': '{title}'}}\n"
+        "    return {'vulnerabilities': [finding]}\n",
         encoding="utf-8",
     )
 
