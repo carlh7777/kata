@@ -14,6 +14,9 @@ from kata.promotion_system import (
     find_evaluator_pack_entry as find_evaluator_pack_entry,
 )
 from kata.promotion_system import (
+    load_sn60_duel_summary as load_sn60_duel_summary,
+)
+from kata.promotion_system import (
     promote_lane_king as promote_lane_king,
 )
 from kata.promotion_system import (
@@ -474,6 +477,13 @@ def verify_submission_result(
         reasons.append("Challenge result is stale because the SN60 benchmark lane has changed.")
     if not current_promotion_ready:
         reasons.append(f"Challenge is not promotion-ready: {summary.promotion_reason}")
+    if summary.primary.competition_mode == "candidate_only":
+        duel_summary = load_sn60_duel_summary(summary.primary.run_summary_path)
+        if duel_summary.candidate.true_positives <= 0:
+            reasons.append(
+                "Candidate-only recovery promotion requires at least one true-positive "
+                "vulnerability."
+            )
 
     return SubmissionVerificationResult(
         submission_path=validation.submission_path,
@@ -494,7 +504,8 @@ def verify_submission_result(
         auto_merge_ready=submission_matches
         and king_is_current
         and benchmark_is_current
-        and current_promotion_ready,
+        and current_promotion_ready
+        and not reasons,
         reasons=reasons,
     )
 

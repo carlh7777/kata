@@ -11,6 +11,7 @@ from kata.evaluators.sn60_bitsec import (
     Sn60ReplicaResult,
     Sn60VariantSummary,
 )
+from kata.promotion_system import load_sn60_duel_summary
 from kata.state_system.lane import (
     load_benchmark_snapshot,
     load_challenge_state,
@@ -234,6 +235,74 @@ def test_run_sn60_round_candidate_only_skips_king_and_selects_top_candidate(
     assert summary.primary.competition_mode == "candidate_only"
     assert summary.primary.king_skipped is True
     assert summary.primary.candidate_beats_king is False
+    duel_summary = load_sn60_duel_summary(summary.primary.run_summary_path)
+    assert duel_summary.king.variant_name == "king"
+    assert duel_summary.king.true_positives == 0
+    assert duel_summary.candidate.variant_name == "candidate"
+    assert duel_summary.candidate.true_positives == 4
+
+
+def test_run_sn60_round_candidate_only_has_no_winner_without_true_positives(
+    tmp_path: Path,
+) -> None:
+    sandbox_root = tmp_path / "sandbox"
+    benchmark_path = write_sandbox_source(sandbox_root)
+    king_root = tmp_path / "king"
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    write_bundle(king_root, "king")
+    write_bundle(first_root, "first")
+    write_bundle(second_root, "second")
+
+    def execute(_context: Sn60ReplicaContext) -> dict[str, object]:
+        return {"success": True, "report": VALID_SCREENING_REPORT}
+
+    def evaluate(
+        context: Sn60ReplicaContext,
+        _report_payload: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            "status": "success",
+            "result": {
+                "project": context.project_key,
+                "timestamp": "2026-07-01T00:00:00+00:00",
+                "total_expected": 4,
+                "total_found": 2,
+                "true_positives": 0,
+                "false_negatives": 4,
+                "false_positives": 2,
+                "detection_rate": 0.0,
+                "precision": 0.0,
+                "f1_score": 0.0,
+                "result": "FAIL",
+            },
+        }
+
+    progress_path = tmp_path / "round-progress.json"
+    result = run_sn60_round(
+        king_artifact_path=str(king_root),
+        candidates=[("first", str(first_root)), ("second", str(second_root))],
+        project_keys=["project-alpha"],
+        output_root=str(tmp_path / "runs"),
+        replicas_per_project=1,
+        sandbox_root=str(sandbox_root),
+        benchmark_file=str(benchmark_path),
+        sandbox_commit="sandbox-commit-1",
+        execution_hook=execute,
+        evaluation_hook=evaluate,
+        candidate_only=True,
+        progress_path=str(progress_path),
+    )
+
+    assert result.competition_mode == "candidate_only"
+    assert result.winner_submission_id is None
+    assert result.promotion_ready is False
+    assert result.winner_challenge_summary_path is None
+    assert "No candidate found" in result.promotion_reason
+    assert all(not entry.selected_winner for entry in result.entries)
+    progress = json.loads(progress_path.read_text())
+    assert progress["state"] == "completed"
+    assert progress["winner_submission_id"] is None
 
 
 def test_run_sn60_challenge_screens_without_a_second_inference_pass(

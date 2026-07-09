@@ -413,6 +413,31 @@ def sn60_candidate_only_to_challenge_summary(
     )
 
 
+def skipped_king_variant_summary(
+    *,
+    king_artifact_path: str,
+    king_artifact_hash: str,
+) -> Sn60VariantSummary:
+    return Sn60VariantSummary(
+        variant_name="king",
+        artifact_path=king_artifact_path,
+        artifact_hash=king_artifact_hash,
+        successful_runs=0,
+        invalid_runs=0,
+        pass_count=0,
+        codebase_pass_count=0,
+        aggregated_score=0.0,
+        average_detection_rate=0.0,
+        true_positives=0,
+        total_expected=0,
+        total_found=0,
+        precision=0.0,
+        f1_score=0.0,
+        project_summaries=[],
+        replica_results=[],
+    )
+
+
 def build_sn60_screening_failure_summary(
     *,
     king_artifact_path: str,
@@ -1000,8 +1025,12 @@ def run_sn60_candidate_only_round(
             "replicas_per_project": replicas_per_project,
             "sandbox_source": asdict(source),
             "king": {
-                "artifact_path": str(king_root),
-                "artifact_hash": king_hash,
+                **asdict(
+                    skipped_king_variant_summary(
+                        king_artifact_path=str(king_root),
+                        king_artifact_hash=king_hash,
+                    )
+                ),
                 "evaluation_skipped": True,
             },
             "candidate": asdict(candidate_summary),
@@ -1024,7 +1053,7 @@ def run_sn60_candidate_only_round(
 
     assert sandbox_source is not None
     ranked = sorted(entries, key=lambda entry: sn60_variant_rank(entry.candidate), reverse=True)
-    winner = ranked[0]
+    winner = next((entry for entry in ranked if entry.candidate.true_positives > 0), None)
     final_entries = [
         Sn60RoundEntry(
             submission_id=entry.submission_id,
@@ -1033,28 +1062,30 @@ def run_sn60_candidate_only_round(
             beats_king=None,
             duel_run_id=entry.duel_run_id,
             candidate=entry.candidate,
-            selected_winner=entry.submission_id == winner.submission_id,
+            selected_winner=winner is not None and entry.submission_id == winner.submission_id,
         )
         for entry in ranked
     ]
-    winner_summary_path = (
-        round_root / winner.submission_id / "candidate_only_challenge_summary.json"
-    )
-    winner_candidate_summary_path = round_root / winner.submission_id / "candidate_summary.json"
-    write_challenge_summary(
-        winner_summary_path,
-        sn60_candidate_only_to_challenge_summary(
-            candidate=winner.candidate,
-            candidate_summary_path=winner_candidate_summary_path,
-            king_artifact_path=str(king_root),
-            king_artifact_hash=king_hash,
-            sandbox_source=sandbox_source,
-            project_keys=project_keys,
-            replicas_per_project=replicas_per_project,
-            lane_id=SN60_MINER_LANE_ID,
-            reason=reason,
-        ),
-    )
+    winner_summary_path: Path | None = None
+    if winner is not None:
+        winner_summary_path = (
+            round_root / winner.submission_id / "candidate_only_challenge_summary.json"
+        )
+        winner_candidate_summary_path = round_root / winner.submission_id / "candidate_summary.json"
+        write_challenge_summary(
+            winner_summary_path,
+            sn60_candidate_only_to_challenge_summary(
+                candidate=winner.candidate,
+                candidate_summary_path=winner_candidate_summary_path,
+                king_artifact_path=str(king_root),
+                king_artifact_hash=king_hash,
+                sandbox_source=sandbox_source,
+                project_keys=project_keys,
+                replicas_per_project=replicas_per_project,
+                lane_id=SN60_MINER_LANE_ID,
+                reason=reason,
+            ),
+        )
     result = Sn60RoundResult(
         schema_version=DEFAULT_SN60_ROUND_SCHEMA_VERSION,
         run_id=run_id,
@@ -1065,13 +1096,20 @@ def run_sn60_candidate_only_round(
         sandbox_source=sandbox_source,
         king=None,
         entries=final_entries,
-        winner_submission_id=winner.submission_id,
-        promotion_ready=True,
+        winner_submission_id=winner.submission_id if winner is not None else None,
+        promotion_ready=winner is not None,
         promotion_reason=(
-            f"{winner.submission_id} won candidate-only recovery mode; "
-            "the current SN60 king was not evaluated"
+            (
+                f"{winner.submission_id} won candidate-only recovery mode; "
+                "the current SN60 king was not evaluated"
+            )
+            if winner is not None
+            else (
+                "No candidate found a true-positive vulnerability in candidate-only "
+                "recovery mode, so no new king was promoted."
+            )
         ),
-        winner_challenge_summary_path=str(winner_summary_path),
+        winner_challenge_summary_path=str(winner_summary_path) if winner_summary_path else None,
         competition_mode="candidate_only",
         king_skipped_reason=reason,
     )

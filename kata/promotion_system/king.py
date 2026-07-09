@@ -193,6 +193,13 @@ def record_promotion_lane_provenance(
 
 def load_sn60_duel_summary(path: str) -> Sn60DuelSummary:
     payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
+    king_payload = payload["king"]
+    if (
+        isinstance(king_payload, dict)
+        and king_payload.get("evaluation_skipped") is True
+        and "variant_name" not in king_payload
+    ):
+        king_payload = skipped_king_variant_payload(king_payload)
     return Sn60DuelSummary(
         schema_version=int(payload["schema_version"]),
         run_id=str(payload["run_id"]),
@@ -201,9 +208,30 @@ def load_sn60_duel_summary(path: str) -> Sn60DuelSummary:
         project_keys=[str(item) for item in payload.get("project_keys") or []],
         replicas_per_project=int(payload["replicas_per_project"]),
         sandbox_source=Sn60SandboxSource(**dict(payload["sandbox_source"])),
-        king=parse_sn60_variant_summary(payload["king"]),
+        king=parse_sn60_variant_summary(king_payload),
         candidate=parse_sn60_variant_summary(payload["candidate"]),
     )
+
+
+def skipped_king_variant_payload(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        "variant_name": "king",
+        "artifact_path": str(payload["artifact_path"]),
+        "artifact_hash": str(payload["artifact_hash"]),
+        "successful_runs": 0,
+        "invalid_runs": 0,
+        "pass_count": 0,
+        "codebase_pass_count": 0,
+        "aggregated_score": 0.0,
+        "average_detection_rate": 0.0,
+        "true_positives": 0,
+        "total_expected": 0,
+        "total_found": 0,
+        "precision": 0.0,
+        "f1_score": 0.0,
+        "project_summaries": [],
+        "replica_results": [],
+    }
 
 
 def parse_sn60_variant_summary(payload: dict[str, object]) -> Sn60VariantSummary:
