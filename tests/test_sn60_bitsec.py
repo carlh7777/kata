@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -9,7 +12,9 @@ import pytest
 from kata.evaluators.sn60_bitsec import (
     Sn60ReplicaContext,
     Sn60ReplicaResult,
+    Sn60SandboxSource,
     build_bitsec_execution_command,
+    build_cached_king_hooks,
     build_default_evaluation_hook,
     build_default_execution_hook,
     ensure_internal_agent_network,
@@ -1344,3 +1349,63 @@ def test_duel_king_cache_recomputes_when_benchmark_changes(tmp_path: Path) -> No
         benchmark_path=benchmark_path, keys=keys, scoreboard=scoreboard, hooks=hooks,
     )
     assert {project for variant, project, _ in calls if variant == "king"} == set(keys)
+
+
+def test_cached_king_scoreboard_saves_are_serialized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scoreboard = tmp_path / "king_scoreboard.json"
+    source = Sn60SandboxSource(
+        sandbox_root=str(tmp_path / "sandbox"),
+        benchmark_file=str(tmp_path / "benchmark.json"),
+        benchmark_sha256="benchmark-sha",
+        sandbox_commit="sandbox-commit",
+        scorer_version="ScaBenchScorerV2",
+    )
+    active_saves = 0
+    overlapping_saves = 0
+    save_lock = threading.Lock()
+
+    def fake_save(_path, _board) -> None:
+        nonlocal active_saves, overlapping_saves
+        with save_lock:
+            active_saves += 1
+            if active_saves > 1:
+                overlapping_saves += 1
+        time.sleep(0.01)
+        with save_lock:
+            active_saves -= 1
+
+    monkeypatch.setattr("kata.evaluators.sn60_bitsec.save_king_scoreboard", fake_save)
+
+    _execute, evaluate = build_cached_king_hooks(
+        scoreboard_path=scoreboard,
+        king_hash="king-sha",
+        benchmark_version="benchmark-version",
+        base_execution_hook=lambda _context: {"success": True, "report": {}},
+        base_evaluation_hook=lambda _context, _report: {
+            "status": "success",
+            "result": {"detection_rate": 1.0},
+        },
+    )
+
+    def evaluate_project(index: int) -> dict[str, object]:
+        context = Sn60ReplicaContext(
+            run_id="run",
+            variant_name="king",
+            project_key=f"project-{index}",
+            replica_index=1,
+            bundle_root=str(tmp_path / f"bundle-{index}"),
+            reports_root=str(tmp_path / f"reports-{index}"),
+            report_path=str(tmp_path / f"reports-{index}" / "report.json"),
+            evaluation_path=str(tmp_path / f"reports-{index}" / "evaluation.json"),
+            sandbox_source=source,
+        )
+        return evaluate(context, {"success": True, "report": {}})
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(evaluate_project, range(8)))
+
+    assert len(results) == 8
+    assert overlapping_saves == 0

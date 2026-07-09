@@ -7,6 +7,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -449,9 +450,11 @@ def build_cached_king_hooks(
         king_hash=king_hash,
         benchmark_version=benchmark_version,
     )
+    board_lock = threading.Lock()
 
     def execution_hook(context: Sn60ReplicaContext) -> dict[str, object]:
-        cached = board.cached_run(context.project_key, context.replica_index)
+        with board_lock:
+            cached = board.cached_run(context.project_key, context.replica_index)
         if cached is not None:
             return dict(cached["report"])  # type: ignore[arg-type]
         return base_execution_hook(context)
@@ -460,17 +463,19 @@ def build_cached_king_hooks(
         context: Sn60ReplicaContext,
         report_payload: dict[str, object],
     ) -> dict[str, object]:
-        cached = board.cached_run(context.project_key, context.replica_index)
+        with board_lock:
+            cached = board.cached_run(context.project_key, context.replica_index)
         if cached is not None:
             return dict(cached["evaluation"])  # type: ignore[arg-type]
         evaluation_payload = base_evaluation_hook(context, report_payload)
-        board.record_run(
-            context.project_key,
-            context.replica_index,
-            report_payload,
-            evaluation_payload,
-        )
-        save_king_scoreboard(scoreboard_path, board)
+        with board_lock:
+            board.record_run(
+                context.project_key,
+                context.replica_index,
+                report_payload,
+                evaluation_payload,
+            )
+            save_king_scoreboard(scoreboard_path, board)
         return evaluation_payload
 
     return execution_hook, evaluation_hook
