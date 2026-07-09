@@ -154,7 +154,9 @@ submissions/<pack>/<mode>/<submission-id>/
 ```bash
 # 1. scaffold a submission
 uv run kata submission init \
-  --subnet-pack sn60__bitsec --mode miner --submission-id <your-github-username>-20260703-01
+  --subnet-pack sn60__bitsec --mode miner \
+  --submission-id <your-github-username>-20260703-01 \
+  --author <your-github-username>
 
 # 2. edit submissions/sn60__bitsec/miner/<your-github-username>-20260703-01/agent.py
 
@@ -163,6 +165,16 @@ uv run kata submission validate \
   --path submissions/sn60__bitsec/miner/<your-github-username>-20260703-01
 
 # 4. commit on a branch, push, and open a PR against the default branch
+```
+
+If the local CLI says the `sn60__bitsec/miner` lane is not registered, run the
+command from the top-level Kata repo with `KATA_ROOT="$(pwd)"`:
+
+```bash
+KATA_ROOT="$(pwd)" uv run kata submission init \
+  --subnet-pack sn60__bitsec --mode miner \
+  --submission-id <your-github-username>-20260703-01 \
+  --author <your-github-username>
 ```
 
 The full submission contract, required files, and anti-cheat rules are in

@@ -299,7 +299,8 @@ Create a submission:
 uv run kata submission init \
   --subnet-pack sn60__bitsec \
   --mode miner \
-  --submission-id <github-user>-YYYYMMDD-01
+  --submission-id <github-user>-YYYYMMDD-01 \
+  --author <github-user>
 ```
 
 Validate before opening a PR:
@@ -310,3 +311,22 @@ uv run kata submission validate \
 ```
 
 Then commit only that submission directory and open one PR.
+
+If a local checkout reports this error:
+
+```text
+No evaluator-backed lane is registered in the pack registry for `sn60__bitsec/miner`.
+```
+
+run the command with `KATA_ROOT` set to the repository root:
+
+```bash
+KATA_ROOT="$(pwd)" uv run kata submission init \
+  --subnet-pack sn60__bitsec \
+  --mode miner \
+  --submission-id <github-user>-YYYYMMDD-01 \
+  --author <github-user>
+```
+
+Use this from the top-level Kata repository directory, where `lanes/registry.json`
+exists.
